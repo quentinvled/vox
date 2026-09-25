@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeyEvent
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QTabWidget,
@@ -153,6 +156,29 @@ class _UpdateInspector(QThread):
         self.checked.emit(info, reason)
 
 
+class _Downloader(QThread):
+    """Telecharge la mise a jour hors du thread d'interface."""
+
+    progress = Signal(int, int)
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, url: str, destination: Path, parent=None) -> None:
+        super().__init__(parent)
+        self._url = url
+        self._destination = destination
+
+    def run(self) -> None:
+        from ..updates import download
+
+        try:
+            path = download(self._url, self._destination, on_progress=self.progress.emit)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.done.emit(path)
+
+
 class SettingsWindow(QDialog):
     """Boîte de dialogue de configuration."""
 
@@ -167,6 +193,8 @@ class SettingsWindow(QDialog):
         self._tester: _KeyTester | None = None
         self._update_inspector: _UpdateInspector | None = None
         self._update_info = None
+        self._downloader: _Downloader | None = None
+        self._download_path: Path | None = None
         self._keys: dict[str, str] = {}
         self._active_provider: str = settings.provider
         self._capturing = False
@@ -192,7 +220,9 @@ class SettingsWindow(QDialog):
         self.tabs.addTab(self._scrollable(self._build_audio()), "Audio")
         self.tabs.addTab(self._scrollable(self._build_output()), "Sortie")
         self.tabs.addTab(self._scrollable(self._build_reword()), "Reformulation")
-        self.tabs.addTab(self._scrollable(self._build_updates()), "Mises à jour")
+        self._updates_tab_index = self.tabs.addTab(
+            self._scrollable(self._build_updates()), "Mises à jour"
+        )
         layout.addWidget(self.tabs, 1)
 
         buttons = QDialogButtonBox()
@@ -609,10 +639,16 @@ class SettingsWindow(QDialog):
         self.download_button = QPushButton("Télécharger la mise à jour")
         self.download_button.setObjectName("primary")
         self.download_button.setEnabled(False)
-        self.download_button.clicked.connect(self._open_download)
+        self.download_button.clicked.connect(self._on_download_clicked)
         actions.addWidget(self.download_button)
         actions.addStretch(1)
         form.addRow("", actions)
+
+        self.download_bar = QProgressBar()
+        self.download_bar.setRange(0, 100)
+        self.download_bar.setValue(0)
+        self.download_bar.setVisible(False)
+        form.addRow("", self.download_bar)
 
         self.update_status = QLabel("")
         self.update_status.setObjectName("hint")
@@ -626,10 +662,9 @@ class SettingsWindow(QDialog):
 
         hint = QLabel(
             "Vox lit un petit fichier JSON publié par l'auteur et compare son "
-            "numéro de version au sien. S'il est plus récent, une entrée « Mise à "
-            "jour disponible » apparaît aussi dans le menu. Vox ne télécharge ni "
-            "n'exécute jamais rien tout seul : il ouvre simplement la page dans "
-            "ton navigateur."
+            "numéro de version au sien. S'il est plus récent, Vox peut "
+            "télécharger le fichier d'installation (avec sa progression) et "
+            "te proposer de le lancer. Rien ne s'exécute sans ton accord."
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
@@ -791,9 +826,28 @@ class SettingsWindow(QDialog):
         self._update_inspector.checked.connect(self._on_update_checked)
         self._update_inspector.start()
 
+    def _reset_download_state(self) -> None:
+        self._download_path = None
+        self.download_bar.setVisible(False)
+        self.download_bar.setRange(0, 100)
+        self.download_bar.setValue(0)
+        self.download_bar.setFormat("%p %")
+        self.download_button.setText("Télécharger la mise à jour")
+
+    def show_updates_tab(self) -> None:
+        """Affiche l'onglet « Mises à jour »."""
+        self.tabs.setCurrentIndex(self._updates_tab_index)
+
+    def present_update(self, info) -> None:
+        """Affiche une mise a jour deja connue (ouverte depuis le menu)."""
+        self._update_info = info
+        self._on_update_checked(info, "")
+        self.show_updates_tab()
+
     def _on_update_checked(self, info, reason: str) -> None:
         self.update_now_button.setEnabled(True)
         self._update_info = info
+        self._reset_download_state()
         if info is None:
             self.download_button.setEnabled(False)
             if reason.startswith("à jour"):
@@ -810,11 +864,84 @@ class SettingsWindow(QDialog):
         self._set_update_status(message, "success")
         self.download_button.setEnabled(bool(info.url))
 
-    def _open_download(self) -> None:
+    # ------------------------------------------------------------------
+    # Telechargement de la mise a jour
+    # ------------------------------------------------------------------
+    def _on_download_clicked(self) -> None:
+        if self._download_path is not None:
+            self._launch_download()
+            return
         info = self._update_info
         url = (info.url if info else "") or self.manifest_edit.text().strip()
-        if url:
-            QDesktopServices.openUrl(QUrl(url))
+        if not url:
+            self._set_update_status("Aucune adresse de téléchargement.", "error")
+            return
+        self._start_download(url)
+
+    def _start_download(self, url: str) -> None:
+        from ..paths import downloads_dir
+        from ..updates import suggested_filename
+
+        destination = downloads_dir() / suggested_filename(url)
+        self._download_path = None
+        self.download_button.setEnabled(False)
+        self.download_button.setText("Téléchargement…")
+        self.download_bar.setRange(0, 100)
+        self.download_bar.setValue(0)
+        self.download_bar.setVisible(True)
+        self._set_update_status(f"Téléchargement vers {destination}")
+        self._downloader = _Downloader(url, destination, self)
+        self._downloader.progress.connect(self._on_download_progress)
+        self._downloader.done.connect(self._on_download_done)
+        self._downloader.failed.connect(self._on_download_failed)
+        self._downloader.start()
+
+    def _on_download_progress(self, received: int, total: int) -> None:
+        if total:
+            self.download_bar.setRange(0, 100)
+            self.download_bar.setValue(int(received * 100 / total))
+            self.download_bar.setFormat(
+                f"{received / 1048576:.1f} / {total / 1048576:.1f} Mo (%p %)"
+            )
+            self._set_update_status(
+                f"Téléchargement… {received / 1048576:.1f} / {total / 1048576:.1f} Mo"
+            )
+        else:
+            self.download_bar.setRange(0, 0)
+            self._set_update_status(f"Téléchargement… {received / 1048576:.1f} Mo")
+
+    def _on_download_done(self, path) -> None:
+        self._download_path = Path(path)
+        self.download_bar.setRange(0, 100)
+        self.download_bar.setValue(100)
+        self.download_bar.setFormat("Téléchargement terminé")
+        self.download_button.setEnabled(True)
+        self.download_button.setText("Installer la mise à jour")
+        self._set_update_status(f"Téléchargement terminé : {self._download_path}", "success")
+
+    def _on_download_failed(self, message: str) -> None:
+        self._download_path = None
+        self.download_bar.setVisible(False)
+        self.download_button.setEnabled(True)
+        self.download_button.setText("Réessayer le téléchargement")
+        self._set_update_status(f"Téléchargement impossible : {message}", "error")
+
+    def _launch_download(self) -> None:
+        path = self._download_path
+        if path is None or not path.exists():
+            return
+        if sys.platform == "win32":
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+            return
+        # Linux : rendre l'AppImage executable puis la lancer.
+        import subprocess
+
+        with contextlib.suppress(OSError):
+            path.chmod(path.stat().st_mode | 0o111)
+        try:
+            subprocess.Popen([str(path)])  # noqa: S603 - fichier choisi par l'utilisateur
+        except OSError as exc:
+            self._set_update_status(f"Lancement impossible : {exc}", "error")
 
     @staticmethod
     def _restyle(widget: QWidget) -> None:

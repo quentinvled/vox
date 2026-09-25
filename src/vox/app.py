@@ -520,14 +520,19 @@ class VoxApp(QObject):
         )
 
     def open_update(self) -> None:
-        """Ouvre la page de telechargement (jamais d'execution automatique)."""
+        """Ouvre les reglages sur l'onglet « Mises a jour »."""
         info = self._update_info
-        target = (info.url if info and info.url else "") or self.settings.update_manifest_url
-        if not target:
+        if info is None and not self.settings.update_manifest_url:
             self._on_notice("info", "Aucune adresse de mise à jour configurée.")
             return
-        QDesktopServices.openUrl(QUrl(target))
-        self._on_notice("info", "Page de téléchargement ouverte dans le navigateur.")
+        self.open_settings()
+        window = self._settings_window
+        if window is None:
+            return
+        if info is not None:
+            window.present_update(info)
+        else:
+            window.show_updates_tab()
 
     def open_stats(self) -> None:
         """Ouvre (ou ramene au premier plan) la fenetre de statistiques."""

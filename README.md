@@ -70,9 +70,10 @@ l'intégrité du téléchargement.
 
 Vox vérifie automatiquement les nouvelles versions au démarrage et deux fois
 par jour. Quand une version plus récente est publiée, une notification et une
-entrée « Mise à jour disponible » apparaissent dans le menu : un clic ouvre la
-page de téléchargement. Rien n'est installé automatiquement. Le bon fichier est
-choisi automatiquement selon ton système.
+entrée « Mise à jour disponible » apparaissent dans le menu. Elle ouvre
+l'onglet **Mises à jour** des réglages, où Vox peut **télécharger le fichier
+d'installation avec sa progression**, puis te proposer de le lancer. Rien ne
+s'exécute sans ton accord.
 
 ## Désinstaller
 

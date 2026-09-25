@@ -66,6 +66,84 @@ def _pynput_name(key) -> str:
     return ""
 
 
+class _WindowsPoller:
+    """Surveille l'etat des modificateurs sans hook clavier.
+
+    `GetAsyncKeyState` ne demande ni privilegie, ni hook : un antivirus ne peut
+    pas le bloquer. C'est le repli fiable quand `keyboard` est musele. La
+    scrutation se met en veille des que le hook fournit des evenements, et ne
+    prend le relais que si celui-ci reste silencieux.
+    """
+
+    INTERVAL = 0.02
+    # VK_LSHIFT/RSHIFT, LCONTROL/RCONTROL, LMENU/RMENU, LWIN/RWIN.
+    _MODIFIERS: tuple[tuple[int, str], ...] = (
+        (0xA0, "left shift"),
+        (0xA1, "right shift"),
+        (0xA2, "left ctrl"),
+        (0xA3, "right ctrl"),
+        (0xA4, "left alt"),
+        (0xA5, "right alt"),
+        (0x5B, "left win"),
+        (0x5C, "right win"),
+    )
+    # Souris + modificateurs generiques : ignores lors de la detection de taint.
+    _IGNORED_VK = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x10, 0x11, 0x12}
+
+    def __init__(self, manager: "HotkeyManager") -> None:
+        self._manager = manager
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._modifier_vks = {vk for vk, _ in self._MODIFIERS}
+        self._previous = {vk: False for vk in self._modifier_vks}
+        self._warned = False
+
+    def start(self) -> None:
+        import ctypes
+
+        self._user32 = ctypes.windll.user32
+        self._thread = threading.Thread(
+            target=self._run, name="vox-hotkey-poll", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread = None
+
+    def _down(self, vk: int) -> bool:
+        return bool(self._user32.GetAsyncKeyState(vk) & 0x8000)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self.tick()
+            time.sleep(self.INTERVAL)
+
+    def tick(self) -> None:
+        """Une passe de scrutation (separee pour etre testable)."""
+        if self._manager.hook_events != 0 or self._manager.error:
+            return
+        if not self._warned:
+            self._warned = True
+            log.info("Hook clavier silencieux : scrutation d'etat active.")
+        for vk, name in self._MODIFIERS:
+            down = self._down(vk)
+            changed = down != self._previous[vk]
+            self._previous[vk] = down
+            if changed and self._manager.hook_events == 0:
+                self._manager._handle(name, down)
+        if self._manager.combo_held and self._any_other_key_down():
+            self._manager._mark_tainted()
+
+    def _any_other_key_down(self) -> bool:
+        for vk in range(0x08, 0xFF):
+            if vk in self._modifier_vks or vk in self._IGNORED_VK:
+                continue
+            if self._down(vk):
+                return True
+        return False
+
+
 class HotkeyManager:
     """Detecte une combinaison de modificateurs et publie des evenements."""
 
@@ -89,10 +167,13 @@ class HotkeyManager:
         self._combo_started_at = 0.0
         self._active = False
         self._handler = None
+        self._poller = None
         self._lock = threading.Lock()
         self._error: str | None = None
-        # Nombre d'evenements clavier reellement recus : sert de temoin pour
-        # verifier que le hook fonctionne (0 = bloque par l'environnement).
+        # Nombre d'evenements recus par le hook clavier (0 = hook muet).
+        self.hook_events = 0
+        # Nombre d'evenements clavier reellement traites : sert de temoin pour
+        # verifier que le raccourci fonctionne (0 = bloque par l'environnement).
         self.seen = 0
 
     # ------------------------------------------------------------------
@@ -118,6 +199,17 @@ class HotkeyManager:
     def error(self) -> str | None:
         return self._error
 
+    @property
+    def combo_held(self) -> bool:
+        """Vrai pendant que la combinaison surveillee est maintenue."""
+        return self._combo_down
+
+    def _mark_tainted(self) -> None:
+        """Invalide le tap en cours (une autre touche a ete pressee)."""
+        with self._lock:
+            if self._pressed:
+                self._tainted = True
+
     # ------------------------------------------------------------------
     def configure(
         self,
@@ -140,12 +232,31 @@ class HotkeyManager:
 
     def start(self) -> None:
         """Installe le hook. Renvoie False (via .error) si indisponible."""
-        if self._handler is not None:
+        if self._handler is not None or self._poller is not None:
             return
         if sys.platform == "win32":
             self._start_keyboard()
+            # Toujours doubler le hook par une scrutation d'etat : si le hook
+            # est bloque (antivirus, pilote clavier), le raccourci continue de
+            # fonctionner. La scrutation se met en veille des que le hook emet
+            # le moindre evenement, donc aucune double detection en pratique.
+            self._start_polling()
         else:
             self._start_pynput()
+
+    def _start_polling(self) -> None:
+        try:
+            poller = _WindowsPoller(self)
+            poller.start()
+        except Exception as exc:  # pragma: no cover - depend du systeme
+            log.warning("Scrutation clavier indisponible : %s", exc)
+            return
+        self._poller = poller
+        if self._error:
+            # Le hook a echoue mais la scrutation prend le relais : le raccourci
+            # est operationnel, on ne signale donc pas d'erreur a l'utilisateur.
+            log.warning("Raccourci : repli sur la scrutation (%s)", self._error)
+            self._error = None
 
     def _start_keyboard(self) -> None:
         try:
@@ -193,19 +304,21 @@ class HotkeyManager:
         self._handler = None
 
     def stop(self) -> None:
-        if self._handler is None:
-            return
-        if sys.platform == "win32":
-            try:
-                import keyboard
+        if self._handler is not None:
+            if sys.platform == "win32":
+                try:
+                    import keyboard
 
-                keyboard.unhook(self._handler)
-            except Exception:
-                pass
-        else:
-            with contextlib.suppress(Exception):
-                self._handler.stop()
-        self._handler = None
+                    keyboard.unhook(self._handler)
+                except Exception:
+                    pass
+            else:
+                with contextlib.suppress(Exception):
+                    self._handler.stop()
+            self._handler = None
+        if self._poller is not None:
+            self._poller.stop()
+            self._poller = None
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -217,12 +330,15 @@ class HotkeyManager:
         return None
 
     def _on_keyboard_event(self, event) -> None:
+        self.hook_events += 1
         self._handle(event.name or "", event.event_type == "down")
 
     def _on_pynput_press(self, key) -> None:
+        self.hook_events += 1
         self._handle(_pynput_name(key), True)
 
     def _on_pynput_release(self, key) -> None:
+        self.hook_events += 1
         self._handle(_pynput_name(key), False)
 
     def _handle(self, name: str, is_down: bool) -> None:

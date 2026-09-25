@@ -4,9 +4,10 @@ Principe : l'application interroge une petite URL publique qui decrit la
 derniere version publiee. Si elle est plus recente, Vox le signale et propose
 d'ouvrir la page de telechargement.
 
-Choix de conception : Vox ne telecharge **jamais** et n'execute **jamais**
-automatiquement un binaire distant. Il se contente d'informer et d'ouvrir le
-navigateur. C'est plus sur, et ca evite de dependre d'une signature de code.
+Choix de conception : Vox n'execute **jamais** un binaire sans action explicite de
+l'utilisateur. L'application peut telecharger le fichier d'installation (avec sa
+progression, depuis l'onglet « Mises a jour ») mais c'est toujours l'utilisateur
+qui declenche le lancement. Cela evite de dependre d'une signature de code.
 
 Format du manifeste (JSON) :
 
@@ -27,10 +28,12 @@ servir plusieurs systemes depuis un seul manifeste.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -115,6 +118,47 @@ def check(
     if not info.is_newer_than(current_version):
         return None, f"à jour ({current_version})"
     return info, ""
+
+
+def suggested_filename(url: str, fallback: str = "Vox-mise-a-jour") -> str:
+    """Nom de fichier propose a partir de l'URL de telechargement."""
+    name = (url or "").split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+    return name or fallback
+
+
+def download(
+    url: str,
+    destination: Path,
+    on_progress=None,
+    timeout: float = 120.0,
+) -> Path:
+    """Telecharge un fichier en flux, en signalant la progression.
+
+    `on_progress(recu, total)` est appele a chaque bloc ; `total` vaut 0 quand
+    le serveur ne fournit pas de Content-Length. Le fichier n'est renomme a sa
+    destination finale qu'une fois le transfert termine (fichier « .part »
+    sinon), et un echec nettoie le temporaire.
+    """
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    part = destination.with_name(destination.name + ".part")
+    try:
+        with httpx.stream("GET", url, follow_redirects=True, timeout=timeout) as response:
+            response.raise_for_status()
+            total = int(response.headers.get("Content-Length") or 0)
+            received = 0
+            with part.open("wb") as handle:
+                for chunk in response.iter_bytes(chunk_size=65536):
+                    handle.write(chunk)
+                    received += len(chunk)
+                    if on_progress is not None:
+                        on_progress(received, total)
+    except Exception:
+        with contextlib.suppress(OSError):
+            part.unlink(missing_ok=True)
+        raise
+    part.replace(destination)
+    return destination
 
 
 def manifest_example(version: str, url: str = "", notes: str = "") -> str:

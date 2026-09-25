@@ -55,6 +55,21 @@ def recordings_index_file() -> Path:
     return data_dir() / "enregistrements.jsonl"
 
 
+def downloads_dir() -> Path:
+    """Dossier ou deposer les mises a jour telechargees.
+
+    On prefere le dossier « Telechargements » de l'utilisateur (la ou il
+    cherchera naturellement) ; a defaut, un sous-dossier des donnees.
+    """
+    home = Path.home()
+    for candidate in (home / "Downloads", home / "Téléchargements"):
+        if candidate.is_dir():
+            return candidate
+    fallback = data_dir() / "mises-a-jour"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
 def log_file() -> Path:
     return data_dir() / "vox.log"
 
