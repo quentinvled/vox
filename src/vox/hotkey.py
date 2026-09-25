@@ -1,10 +1,11 @@
 """Raccourci clavier global base sur un hook bas niveau.
 
 Ctrl+Maj seul n'est pas declarable via RegisterHotKey (il faut une touche
-reelle). On passe donc par `keyboard` (WH_KEYBOARD_LL) et on reconstruit la
-logique "tap" nous-memes, avec annulation si une autre touche est pressee
-pendant que la combinaison est maintenue (pour ne pas confondre avec
-Ctrl+Maj+Echap, Ctrl+Maj+T, etc.).
+reelle). Sous Windows on passe donc par `keyboard` (WH_KEYBOARD_LL) ; sous
+Linux, `pynput` ecoute les evenements X11 sans privilege particulier. Dans les
+deux cas on reconstruit la logique « tap » nous-memes, avec annulation si une
+autre touche est pressee pendant que la combinaison est maintenue (pour ne pas
+confondre avec Ctrl+Maj+Echap, Ctrl+Maj+T, etc.).
 
 Le module n'utilise volontairement aucune API Qt : les evenements sont
 pousses dans une file, consommee par le thread principal via un QTimer.
@@ -12,7 +13,9 @@ pousses dans une file, consommee par le thread principal via un QTimer.
 
 from __future__ import annotations
 
+import contextlib
 import queue
+import sys
 import threading
 import time
 
@@ -30,6 +33,34 @@ _GROUPS = {"ctrl": _CTRL, "shift": _SHIFT, "alt": _ALT, "win": _WIN}
 
 # Touches qui ne doivent pas invalider une combinaison (auto-repetition, etc.)
 _IGNORED = {"", "unknown"}
+
+# Noms renvoyes par pynput -> noms attendus par la machine a etats ci-dessous.
+_PYNPUT_NAMES = {
+    "ctrl": "ctrl",
+    "ctrl_l": "left ctrl",
+    "ctrl_r": "right ctrl",
+    "shift": "shift",
+    "shift_l": "left shift",
+    "shift_r": "right shift",
+    "alt": "alt",
+    "alt_l": "left alt",
+    "alt_r": "right alt",
+    "alt_gr": "alt gr",
+    "cmd": "win",
+    "cmd_l": "left win",
+    "cmd_r": "right win",
+}
+
+
+def _pynput_name(key) -> str:
+    """Normalise une touche pynput en nom lisible (« ctrl », « alt gr », « a »)."""
+    name = getattr(key, "name", None)
+    if name:
+        return _PYNPUT_NAMES.get(name, name)
+    char = getattr(key, "char", None)
+    if char:
+        return str(char).lower()
+    return ""
 
 
 class HotkeyManager:
@@ -105,26 +136,54 @@ class HotkeyManager:
         """Installe le hook. Renvoie False (via .error) si indisponible."""
         if self._handler is not None:
             return
+        if sys.platform == "win32":
+            self._start_keyboard()
+        else:
+            self._start_pynput()
+
+    def _start_keyboard(self) -> None:
         try:
             import keyboard  # import tardif : evite un crash si absent
         except Exception as exc:
             self._error = f"Bibliothèque 'keyboard' indisponible : {exc}"
             return
         try:
-            self._handler = keyboard.hook(self._on_event, suppress=False)
+            self._handler = keyboard.hook(self._on_keyboard_event, suppress=False)
         except Exception as exc:
             self._error = f"Impossible d'installer le raccourci global : {exc}"
             self._handler = None
 
+    def _start_pynput(self) -> None:
+        try:
+            from pynput import keyboard
+        except Exception as exc:
+            self._error = f"Bibliothèque 'pynput' indisponible : {exc}"
+            return
+        try:
+            listener = keyboard.Listener(
+                on_press=self._on_pynput_press,
+                on_release=self._on_pynput_release,
+                suppress=False,
+            )
+            listener.start()
+        except Exception as exc:
+            self._error = f"Impossible d'installer le raccourci global : {exc}"
+            return
+        self._handler = listener
+
     def stop(self) -> None:
         if self._handler is None:
             return
-        try:
-            import keyboard
+        if sys.platform == "win32":
+            try:
+                import keyboard
 
-            keyboard.unhook(self._handler)
-        except Exception:
-            pass
+                keyboard.unhook(self._handler)
+            except Exception:
+                pass
+        else:
+            with contextlib.suppress(Exception):
+                self._handler.stop()
         self._handler = None
 
     # ------------------------------------------------------------------
@@ -136,12 +195,20 @@ class HotkeyManager:
                 return group
         return None
 
-    def _on_event(self, event) -> None:
-        name = (event.name or "").lower()
-        if name in _IGNORED:
+    def _on_keyboard_event(self, event) -> None:
+        self._handle(event.name or "", event.event_type == "down")
+
+    def _on_pynput_press(self, key) -> None:
+        self._handle(_pynput_name(key), True)
+
+    def _on_pynput_release(self, key) -> None:
+        self._handle(_pynput_name(key), False)
+
+    def _handle(self, name: str, is_down: bool) -> None:
+        lowered = (name or "").lower()
+        if lowered in _IGNORED:
             return
-        is_down = event.event_type == "down"
-        group = self._group_of(name)
+        group = self._group_of(lowered)
 
         with self._lock:
             if group:

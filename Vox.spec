@@ -15,6 +15,7 @@ Notes :
 """
 
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
 
@@ -35,15 +36,25 @@ binaries += collect_dynamic_libs("sounddevice")
 hiddenimports += [
     "vox",
     "vox.__main__",
-    "keyboard",
-    "keyboard._winkeyboard",
     "numpy",
     "httpx",
     "httpcore",
     "anyio",
 ]
 
-ICON = "assets/Vox.ico"
+if sys.platform == "win32":
+    hiddenimports += ["keyboard", "keyboard._winkeyboard"]
+else:
+    # Linux : le raccourci global et la frappe passent par pynput (X11).
+    hiddenimports += [
+        "pynput",
+        "pynput.keyboard",
+        "pynput._util",
+        "pynput._util.xorg",
+        "Xlib",
+    ]
+
+ICON = "assets/Vox.ico" if sys.platform == "win32" else "assets/Vox.png"
 
 a = Analysis(
     ["run_vox.py"],

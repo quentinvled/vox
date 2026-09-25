@@ -6,9 +6,10 @@ description = "Dictee vocale globale : transcription Whisper + reformulation LLM
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
-    "keyboard>=0.13.5",
+    "keyboard>=0.13.5; sys_platform == 'win32'",
     "numpy>=2.5.3",
     "pyside6>=6.11.2",
+    "pynput>=1.7.7; sys_platform == 'linux'",
     "sounddevice>=0.5.6",
 ]
 

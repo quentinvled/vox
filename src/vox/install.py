@@ -1,11 +1,13 @@
-"""Installation et desinstallation de Vox (sans Qt).
+"""Installation et desinstallation de Vox.
+
+Sous Windows : installation dans %LOCALAPPDATA%\\Programs\\Vox, raccourcis,
+entree de desinstallation dans le registre. Sous Linux, l'application est
+distribuee en AppImage (fichier unique) : il n'y a rien a copier, seule la
+gestion du demarrage automatique et des donnees s'applique.
 
 Volontairement limite a la bibliotheque standard : ce module est importe par
-l'installeur, qui ne doit surtout pas embarquer PySide6 pour rien.
-
-L'installation va dans %LOCALAPPDATA%\\Programs\\Vox : aucun droit
-administrateur n'est requis, et rien n'est ecrit ailleurs que dans le profil
-de l'utilisateur.
+l'installeur, qui ne doit surtout pas embarquer Qt ni quoi que ce soit de
+lourd.
 """
 
 from __future__ import annotations
@@ -17,8 +19,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import winreg
 from pathlib import Path
+
+try:
+    import winreg  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - hors Windows
+    winreg = None  # type: ignore[assignment]
 
 from .paths import data_dir
 
@@ -41,6 +47,12 @@ def install_dir() -> Path:
 
 
 def installed_exe() -> Path:
+    if sys.platform != "win32":
+        # Hors Windows il n'y a pas de copie : on pointe l'AppImage (figee) ou
+        # le lanceur installe.
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve()
+        return Path(shutil.which("vox") or sys.executable).resolve()
     return install_dir() / PROCESS_NAME
 
 
@@ -295,7 +307,12 @@ def unregister_uninstall() -> None:
 
 
 def set_autostart(enabled: bool) -> None:
-    """Active ou retire le lancement au demarrage de Windows."""
+    """Active ou retire le lancement au demarrage (registre ou .desktop)."""
+    if sys.platform != "win32":
+        from . import autostart
+
+        autostart.set_autostart(enabled)
+        return
     try:
         with winreg.OpenKey(
             winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE
@@ -310,6 +327,10 @@ def set_autostart(enabled: bool) -> None:
 
 
 def is_autostart_enabled() -> bool:
+    if sys.platform != "win32":
+        from . import autostart
+
+        return autostart.is_autostart_enabled()
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             winreg.QueryValueEx(key, "Vox")
@@ -377,6 +398,9 @@ def _schedule_directory_removal(target: Path) -> None:
 
 def uninstall(silent: bool = False) -> int:
     """Desinstalle Vox. Demande si l'historique doit aussi partir."""
+    if sys.platform != "win32":
+        return _uninstall_unix(silent)
+
     # 1. Les autres instances, mais surtout pas la notre.
     stop_running(exclude_self=True)
 
@@ -422,6 +446,37 @@ def uninstall(silent: bool = False) -> int:
         message_box(
             f"Vox a ete desinstalle.\n\n{detail}", "Vox", MB_OK | MB_ICONINFORMATION
         )
+    return 0
+
+
+def _uninstall_unix(silent: bool = False) -> int:
+    """Desinstallation hors Windows (AppImage ou paquet systeme).
+
+    Il n'y a pas de dossier a effacer : l'application est un fichier unique.
+    On retire le demarrage automatique et, sur demande, les donnees.
+    """
+    from . import autostart
+
+    autostart.set_autostart(False)
+
+    history = data_dir()
+    remove_data = False
+    if history.exists() and not silent:
+        answer = message_box(
+            "Vox va etre desinstalle.\n\n"
+            "Supprimer aussi ton historique de dictees, tes reglages et ta cle API ?\n\n"
+            f"Dossier : {history}",
+            "Desinstallation de Vox",
+            MB_YESNO | MB_ICONQUESTION,
+        )
+        remove_data = answer == IDYES
+    if remove_data:
+        shutil.rmtree(history, ignore_errors=True)
+
+    print("Vox a ete desinstalle.")
+    if not remove_data and history.exists():
+        print(f"Ton historique est conserve dans : {history}")
+    print("Pense a supprimer le fichier de l'application (AppImage) si besoin.")
     return 0
 
 

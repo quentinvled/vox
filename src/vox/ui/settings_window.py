@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import sys
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QKeyEvent
@@ -304,7 +305,7 @@ class SettingsWindow(QDialog):
         )
         trigger_form.addRow("", self.enter_check)
 
-        self.autostart_check = QCheckBox("Lancer Vox au démarrage de Windows")
+        self.autostart_check = QCheckBox("Lancer Vox au démarrage de la session")
         trigger_form.addRow("", self.autostart_check)
 
         outer.addWidget(trigger_box)
@@ -348,7 +349,7 @@ class SettingsWindow(QDialog):
 
         self.device_combo = QComboBox()
         self.device_combo.setMinimumWidth(260)
-        self.device_combo.addItem("Périphérique par défaut de Windows", None)
+        self.device_combo.addItem("Périphérique d'entrée par défaut", None)
         for device in list_input_devices():
             self.device_combo.addItem(
                 f"{device['name']}  ·  {device['hostapi']}", device["index"]
@@ -470,13 +471,21 @@ class SettingsWindow(QDialog):
 
         outer.addWidget(rec_box)
 
-        tray_hint = QLabel(
-            "Vox n'a pas de fenêtre principale : il vit dans la zone de notification "
-            "(derrière le chevron ^ près de l'horloge). Windows y range les nouvelles "
-            "icônes par défaut ; le menu « Où est mon icône ? » explique comment "
-            "l'épingler à côté de l'horloge. Si tu préfères une présence permanente "
-            "dans la barre des tâches, coche l'option ci-dessus."
-        )
+        if sys.platform == "win32":
+            tray_text = (
+                "Vox n'a pas de fenêtre principale : il vit dans la zone de notification "
+                "(derrière le chevron ^ près de l'horloge). Windows y range les nouvelles "
+                "icônes par défaut ; le menu « Où est mon icône ? » explique comment "
+                "l'épingler à côté de l'horloge. Si tu préfères une présence permanente "
+                "dans la barre des tâches, coche l'option ci-dessus."
+            )
+        else:
+            tray_text = (
+                "Vox n'a pas de fenêtre principale : il vit dans la barre système, près "
+                "de l'horloge. Sur GNOME, l'icône n'apparaît qu'avec l'extension "
+                "« AppIndicator » : installe-la puis relance Vox."
+            )
+        tray_hint = QLabel(tray_text)
         tray_hint.setObjectName("hint")
         tray_hint.setWordWrap(True)
         outer.addWidget(tray_hint)
@@ -522,11 +531,19 @@ class SettingsWindow(QDialog):
         outer.addWidget(box)
         outer.addWidget(note)
 
-        warn = QLabel(
-            "Limite connue : dans une fenêtre élevée (UAC / administrateur), Windows "
-            "refuse l'insertion. Vox affiche alors une erreur et le texte reste "
-            "disponible via « Réinsérer le dernier texte »."
-        )
+        if sys.platform == "win32":
+            warn_text = (
+                "Limite connue : dans une fenêtre élevée (UAC / administrateur), Windows "
+                "refuse l'insertion. Vox affiche alors une erreur et le texte reste "
+                "disponible via « Réinsérer le dernier texte »."
+            )
+        else:
+            warn_text = (
+                "Sous Wayland, la simulation du collage est restreinte par le "
+                "gestionnaire de fenêtres : si le collage échoue, choisis la méthode "
+                "« Frappe » ci-dessus, qui fonctionne partout."
+            )
+        warn = QLabel(warn_text)
         warn.setObjectName("hint")
         warn.setWordWrap(True)
         outer.addWidget(warn)
@@ -677,7 +694,7 @@ class SettingsWindow(QDialog):
     def _reload_devices(self) -> None:
         current = self.device_combo.currentData()
         self.device_combo.clear()
-        self.device_combo.addItem("Peripherique par defaut de Windows", None)
+        self.device_combo.addItem("Peripherique d'entree par defaut", None)
         for device in list_input_devices():
             self.device_combo.addItem(f"{device['name']}  ·  {device['hostapi']}", device["index"])
         index = self.device_combo.findData(current)

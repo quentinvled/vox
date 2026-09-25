@@ -135,7 +135,7 @@ class Tray(QSystemTrayIcon):
 
         self._menu.addSeparator()
 
-        self.autostart_action = QAction("Lancer au démarrage de Windows", self._menu)
+        self.autostart_action = QAction("Lancer au démarrage de la session", self._menu)
         self.autostart_action.setCheckable(True)
         self.autostart_action.setChecked(self._autostart)
         self.autostart_action.toggled.connect(self.autostart_toggled.emit)

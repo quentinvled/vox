@@ -11,10 +11,46 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    runs-on: windows-latest
+  # Verifie une seule fois que le tag correspond bien a __version__.
+  verify:
+    runs-on: ubuntu-latest
     steps:
       - name: Recuperer le depot (avec l'historique des tags)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Installer uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Installer Python 3.13
+        run: uv python install 3.13
+
+      - name: Installer les dependances
+        run: uv sync --group dev
+
+      - name: Verifier que le tag correspond a la version du code
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(uv run python -c 'import vox; print(vox.__version__)')"
+          echo "tag=$tag  version=$version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Le tag v$tag ne correspond pas a __version__=$version"
+            exit 1
+          fi
+
+  # ------------------------------------------------------------------
+  # Windows : Vox.exe + l'installeur Vox-Setup-<version>.exe
+  # ------------------------------------------------------------------
+  windows:
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - name: Recuperer le depot
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -30,37 +66,107 @@ jobs:
       - name: Installer les dependances (dont PyInstaller)
         run: uv sync --group dev
 
-      - name: Verifier que le tag correspond a la version du code
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
-          version="$(uv run python -c 'import vox; print(vox.__version__)')"
-          echo "tag=$tag  version=$version"
-          if [ "$tag" != "$version" ]; then
-            echo "::error::Le tag v$tag ne correspond pas a __version__=$version"
-            exit 1
-          fi
-
       - name: Construire Vox et l'installeur
         run: uv run python tools/build_installer.py --rebuild
+
+      - name: Conserver les artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          if-no-files-found: error
+          path: |
+            dist-share/Vox-Setup-*.exe
+            dist-share/Vox-Setup-*.exe.sha256
+
+  # ------------------------------------------------------------------
+  # Linux : binaire PyInstaller emballe en AppImage
+  # ------------------------------------------------------------------
+  linux:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Installer uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Installer Python 3.13
+        run: uv python install 3.13
+
+      - name: Installer les dependances
+        run: uv sync --group dev
+
+      - name: Installer les bibliotheques systeme (Qt + PortAudio)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libportaudio2 libgl1 libegl1 libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+            libdbus-1-3
+
+      - name: Telecharger appimagetool
+        run: |
+          curl -L -o /tmp/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+
+      - name: Construire l'AppImage
+        env:
+          APPIMAGETOOL: /tmp/appimagetool
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: uv run python tools/build_appimage.py
+
+      - name: Conserver les artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          if-no-files-found: error
+          path: |
+            dist-share/Vox-*-x86_64.AppImage
+            dist-share/Vox-*-x86_64.AppImage.sha256
+
+  # ------------------------------------------------------------------
+  # Publication : manifeste multi-plateforme + release GitHub
+  # ------------------------------------------------------------------
+  release:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recuperer le depot (avec l'historique des tags)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Recuperer tous les artefacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-share
+          merge-multiple: true
 
       - name: Generer le manifeste de mise a jour
         shell: bash
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Vox-Setup-${version}.exe"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
           prev="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
           if [ -n "$prev" ]; then range="${prev}..${GITHUB_REF_NAME}"; else range="HEAD"; fi
           notes="$(git log --pretty=format:'- %s' "$range" | head -20)"
-          uv run python tools/make_manifest.py \
+          python3 tools/make_manifest.py \
             --version "$version" \
-            --url "$url" \
+            --windows "${base}/Vox-Setup-${version}.exe" \
+            --linux "${base}/Vox-${version}-x86_64.AppImage" \
             --notes "$notes" \
             --out dist-share/version.json
           echo "--- manifeste ---"
           cat dist-share/version.json
+          echo "--- fichiers ---"
+          ls -lh dist-share
 
       - name: Publier la release GitHub
         uses: softprops/action-gh-release@v3
@@ -71,4 +177,6 @@ jobs:
           files: |
             dist-share/Vox-Setup-*.exe
             dist-share/Vox-Setup-*.exe.sha256
+            dist-share/Vox-*-x86_64.AppImage
+            dist-share/Vox-*-x86_64.AppImage.sha256
             dist-share/version.json

@@ -18,14 +18,19 @@ tools/release.py 0.2.0
         │  met a jour __version__, commit, tag v0.2.0, push
         ▼
 GitHub Actions (.github/workflows/release.yml)
-        │  construit Vox.exe + l'installeur sur windows-latest
-        │  genere version.json (manifeste)
+        │  job « verify »   : le tag correspond bien a __version__
+        │  job « windows »  : Vox.exe + l'installeur (windows-latest)
+        │  job « linux »    : binaire + AppImage (ubuntu-latest)
+        │  job « release »  : manifeste multi-plateforme + release GitHub
         ▼
 Release GitHub v0.2.0
-        │  assets : Vox-Setup-0.2.0.exe (+ .sha256), version.json
+        │  assets : Vox-Setup-0.2.0.exe (+ .sha256)
+        │           Vox-0.2.0-x86_64.AppImage (+ .sha256)
+        │           version.json
         ▼
 L'application interroge l'URL stable :
   .../releases/latest/download/version.json
+  → choisit son fichier selon l'OS (champ « urls »)
   → si plus recent : entree « Mise a jour disponible » dans le menu
 ```
 
@@ -33,6 +38,8 @@ L'application interroge l'URL stable :
   `pyproject.toml` la lit automatiquement (`dynamic = ["version"]`).
 - L'URL du manifeste est pre-remplie dans les reglages (`config.DEFAULT_MANIFEST_URL`).
 - La CI verifie que le tag correspond bien a `__version__` avant de construire.
+- Le manifeste contient un champ `urls` par systeme ; l'ancien champ `url`
+  (Windows) est conserve pour la compatibilite.
 
 ## Avant de publier
 
@@ -56,31 +63,33 @@ L'application interroge l'URL stable :
 ## Publication manuelle (sans la CI)
 
 ```bash
-# Sur une machine Windows, apres avoir bumpe __version__ :
+# Windows, apres avoir bumpe __version__ :
 uv sync --group dev
 uv run python tools/build_installer.py --rebuild
 # -> dist-share/Vox-Setup-<version>.exe (+ .sha256)
 
+# Linux, sur une machine avec appimagetool :
+uv run python tools/build_appimage.py
+# -> dist-share/Vox-<version>-x86_64.AppImage (+ .sha256)
+
 uv run python tools/make_manifest.py \
   --version <version> \
-  --url https://github.com/quentinvled/vox/releases/download/v<version>/Vox-Setup-<version>.exe \
+  --windows https://github.com/quentinvled/vox/releases/download/v<version>/Vox-Setup-<version>.exe \
+  --linux https://github.com/quentinvled/vox/releases/download/v<version>/Vox-<version>-x86_64.AppImage \
   --notes "Ce qui change" \
   --out dist-share/version.json
-# puis creer la release et y joindre ces trois fichiers.
+# puis creer la release et y joindre tous ces fichiers.
 ```
 
-## Important : depot public ou non
+## Depot public
 
-Le depot est **prive** aujourd'hui. Or l'application (et tes amis) telecharge
-les fichiers **sans compte GitHub** : avec un depot prive, GitHub renvoie une
-erreur 404 sur les releases et sur le manifeste. Deux options :
-
-1. **Rendre le depot public** (le plus simple) : tout fonctionne sans compte,
-   sans cout, sans configuration. Le code devient visible, mais l'audit montre
-   qu'il ne contient aucun secret.
-2. **Garder le code prive** et heberger les binaires ailleurs (bucket public
-   type Cloudflare R2 / S3) : il faut alors adapter le workflow et pointer
-   `DEFAULT_MANIFEST_URL` vers cet hebergement.
+Le depot est **public** : tes amis telechargent les binaires sans compte
+GitHub, et le manifeste de mise a jour est lisible par tous. C'est le
+fonctionnement attendu. Le code est visible, mais l'audit initial n'a trouve
+aucun secret (le `.env` est ignore par git, les cles ne vivent que dans
+`%LOCALAPPDATA%\Vox\settings.json` ou `~/.local/share/Vox/settings.json`).
+Seule donnee personnelle exposee : l'adresse e-mail de l'auteur, presente dans
+l'historique des commits.
 
 ## Avertissement Windows (SmartScreen)
 

@@ -1,9 +1,11 @@
-"""Signaux sonores synthetises, ecrits sur disque puis joues par Windows.
+"""Signaux sonores synthetises, ecrits sur disque puis joues.
 
-Pourquoi des fichiers et pas la memoire : `winsound.PlaySound` leve
-« Cannot play asynchronously from memory » quand on combine SND_MEMORY et
-SND_ASYNC. En passant par un fichier (SND_FILENAME), la lecture est reellement
-asynchrone et n'importe quel thread peut l'appeler sans bloquer l'interface.
+Sous Windows, `winsound.PlaySound` joue un fichier de facon asynchrone depuis
+n'importe quel thread (combiner SND_MEMORY et SND_ASYNC y leve « Cannot play
+asynchronously from memory », d'ou le passage par un fichier).
+
+Ailleurs, on reutilise `sounddevice`, deja requis pour le micro : le WAV est
+decode en memoire une fois puis joue de facon asynchrone.
 
 Le timbre est celui d'une cloche douce : quelques partiels, deux oscillateurs
 legerement desaccordes (chorus) et une enveloppe exponentielle, plus agreable
@@ -128,13 +130,46 @@ def ensure_files() -> dict[str, str]:
 
 def play(name: str) -> None:
     """Joue un signal sans bloquer. Utilisable depuis n'importe quel thread."""
-    if winsound is None:
-        return
     path = ensure_files().get(name)
     if not path:
         return
+    if winsound is not None:
+        try:
+            winsound.PlaySound(path, SND_FILENAME | SND_ASYNC | SND_NODEFAULT)
+        except Exception as exc:
+            log.warning("Lecture du signal %s impossible : %s", name, exc)
+        return
+    _play_async(path, name)
+
+
+# Echantillons decodes, mis en cache : le WAV ne change pas d'un lancement a
+# l'autre, inutile de le relire a chaque bip.
+_samples: dict[str, tuple] = {}
+
+
+def _decode(path: str) -> tuple:
+    import numpy as np
+
+    with wave.open(path, "rb") as handle:
+        rate = handle.getframerate()
+        frames = handle.readframes(handle.getnframes())
+    data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    return data, rate
+
+
+def _play_async(path: str, name: str) -> None:
     try:
-        winsound.PlaySound(path, SND_FILENAME | SND_ASYNC | SND_NODEFAULT)
+        import sounddevice as sd
+    except Exception:  # pragma: no cover - sounddevice est une dependance
+        return
+    try:
+        cached = _samples.get(name)
+        if cached is None:
+            cached = _decode(path)
+            _samples[name] = cached
+        # On coupe le bip precedent pour eviter toute superposition.
+        sd.stop()
+        sd.play(cached[0], cached[1])
     except Exception as exc:
         log.warning("Lecture du signal %s impossible : %s", name, exc)
 

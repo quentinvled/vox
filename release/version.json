@@ -1,6 +1,10 @@
 {
-  "version": "0.1.0",
-  "url": "https://github.com/quentinvled/vox/releases/download/v0.1.0/Vox-Setup-0.1.0.exe",
+  "version": "0.2.0",
+  "url": "https://github.com/quentinvled/vox/releases/download/v0.2.0/Vox-Setup-0.2.0.exe",
+  "urls": {
+    "windows": "https://github.com/quentinvled/vox/releases/download/v0.2.0/Vox-Setup-0.2.0.exe",
+    "linux": "https://github.com/quentinvled/vox/releases/download/v0.2.0/Vox-0.2.0-x86_64.AppImage"
+  },
   "notes": "Exemple de manifeste. Le vrai est genere automatiquement par GitHub Actions a chaque release, puis publie comme asset « version.json » de la derniere release.",
   "published_at": "2026-09-25"
 }

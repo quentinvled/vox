@@ -10,4 +10,6 @@ dist-single/
 .ruff_cache/
 dist-share/
 dist-setup/
+dist-linux/
 release/*.exe
+release/*.AppImage

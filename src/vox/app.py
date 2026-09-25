@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import sys
 import time
-from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
@@ -15,10 +13,10 @@ from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
 from . import __version__, injector, models, recordings, sounds, updates
 from . import config as config_module
+from .autostart import set_autostart
 from .config import HOTKEY_CHOICES, Settings
 from .hotkey import EVENT_CANCEL, EVENT_START, EVENT_STOP, HotkeyManager
 from .models import Catalogue
-from .paths import data_dir, project_root
 from .pipeline import Pipeline
 from .reword import TONES
 from .ui.history_window import RecordingsWindow
@@ -32,7 +30,6 @@ from .ui.widgets import make_app_icon
 log = logging.getLogger("vox")
 
 SERVER_NAME = "vox-single-instance"
-AUTOSTART_NAME = "Vox"
 
 # Duree d'affichage d'un message d'erreur quand la pilule se cache d'elle-meme.
 NOTICE_SECONDS = 6
@@ -211,26 +208,36 @@ class VoxApp(QObject):
         )
 
     def show_icon_help(self) -> None:
-        """Ouvre la page Windows qui régit les icônes de la zone de notification."""
-        self.tray.showMessage(
-            "Où se trouve l'icône ?",
-            "Windows range les nouvelles icônes derrière le chevron ^, près de "
-            "l'horloge. Pour l'y épingler : Paramètres → Personnalisation → Barre "
-            "des tâches → Autres icônes du système → active Vox.",
-            QSystemTrayIcon.Information,
-            15000,
-        )
-        QTimer.singleShot(400, lambda: QDesktopServices.openUrl(QUrl("ms-settings:taskbar")))
+        """Aide a retrouver l'icone dans la zone de notification."""
+        if sys.platform == "win32":
+            self.tray.showMessage(
+                "Où se trouve l'icône ?",
+                "Windows range les nouvelles icônes derrière le chevron ^, près de "
+                "l'horloge. Pour l'y épingler : Paramètres → Personnalisation → Barre "
+                "des tâches → Autres icônes du système → active Vox.",
+                QSystemTrayIcon.Information,
+                15000,
+            )
+            QTimer.singleShot(400, lambda: QDesktopServices.openUrl(QUrl("ms-settings:taskbar")))
+        else:
+            self.tray.showMessage(
+                "Où se trouve l'icône ?",
+                "L'icône se trouve dans la barre système, près de l'horloge. Sur GNOME, "
+                "elle n'apparaît qu'avec l'extension « AppIndicator » : installe-la puis "
+                "relance Vox.",
+                QSystemTrayIcon.Information,
+                15000,
+            )
 
     def set_autostart_enabled(self, enabled: bool) -> None:
         self.settings.autostart = enabled
         config_module.save(self.settings)
         set_autostart(enabled)
         self.tray.set_autostart(enabled)
-        self._on_notice(
-            "info",
-            "Vox se lancera au démarrage de Windows." if enabled else "Démarrage auto désactivé.",
-        )
+        if enabled:
+            self._on_notice("info", "Vox se lancera au démarrage de la session.")
+        else:
+            self._on_notice("info", "Démarrage auto désactivé.")
 
     def set_taskbar_mode(self, enabled: bool) -> None:
         """Garde la pilule dans la barre des tâches, comme une application classique."""
@@ -638,41 +645,6 @@ def handle_second_instance(server: QLocalServer, app: VoxApp) -> None:
             app.open_recordings()
         else:
             app.overlay.show_pill()
-
-
-def _launcher_command() -> str:
-    """Commande inscrite au demarrage automatique de Windows."""
-    if getattr(sys, "frozen", False):
-        return f'"{Path(sys.executable)}"'
-    project = project_root()
-    venv_pythonw = project / ".venv" / "Scripts" / "pythonw.exe"
-    launcher = data_dir() / "vox_autostart.cmd"
-    interpreter = venv_pythonw if venv_pythonw.exists() else Path(sys.executable)
-    launcher.write_text(
-        "@echo off\r\n"
-        f'cd /d "{project}"\r\n'
-        f'start "" "{interpreter}" -m vox\r\n',
-        encoding="utf-8",
-    )
-    return f'"{launcher}"'
-
-
-def set_autostart(enabled: bool) -> None:
-    """Inscrit ou retire Vox du demarrage automatique de Windows."""
-    if sys.platform != "win32":
-        return
-    import winreg
-
-    path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
-            if enabled:
-                winreg.SetValueEx(key, AUTOSTART_NAME, 0, winreg.REG_SZ, _launcher_command())
-            else:
-                with contextlib.suppress(FileNotFoundError):
-                    winreg.DeleteValue(key, AUTOSTART_NAME)
-    except OSError:
-        pass
 
 
 __all__ = [

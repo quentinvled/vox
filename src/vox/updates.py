@@ -13,20 +13,37 @@ Format du manifeste (JSON) :
     {
       "version": "0.2.0",
       "url": "https://exemple.tld/vox/Vox-Setup-0.2.0.exe",
+      "urls": {
+        "windows": "https://exemple.tld/vox/Vox-Setup-0.2.0.exe",
+        "linux": "https://exemple.tld/vox/Vox-0.2.0-x86_64.AppImage"
+      },
       "notes": "Correction des tarifs, installateur Windows",
       "published_at": "2026-10-01"
     }
+
+`url` reste le telechargement Windows pour la compatibilite ; `urls` permet de
+servir plusieurs systemes depuis un seul manifeste.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 
 import httpx
 
 DEFAULT_TIMEOUT = 15.0
+
+
+def platform_key() -> str:
+    """Cle de telechargement correspondant au systeme courant."""
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
 
 
 @dataclass
@@ -84,9 +101,14 @@ def check(
     if not version:
         return None, "manifeste sans champ « version »"
 
+    urls = payload.get("urls")
+    selected = ""
+    if isinstance(urls, dict):
+        selected = str(urls.get(platform_key()) or "").strip()
+
     info = UpdateInfo(
         version=version,
-        url=str(payload.get("url") or "").strip(),
+        url=selected or str(payload.get("url") or "").strip(),
         notes=str(payload.get("notes") or "").strip(),
         published_at=str(payload.get("published_at") or "").strip(),
     )
@@ -99,9 +121,14 @@ def manifest_example(version: str, url: str = "", notes: str = "") -> str:
     """Gabarit pret a publier (utile pour `vox --write-manifest`)."""
     from datetime import date
 
+    windows = url or f"https://exemple.tld/vox/Vox-Setup-{version}.exe"
     payload = {
         "version": version,
-        "url": url or f"https://exemple.tld/vox/Vox-Setup-{version}.exe",
+        "url": windows,
+        "urls": {
+            "windows": windows,
+            "linux": f"https://exemple.tld/vox/Vox-{version}-x86_64.AppImage",
+        },
         "notes": notes or "Decris ici ce qui change.",
         "published_at": date.today().isoformat(),
     }
