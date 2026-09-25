@@ -1,0 +1,49 @@
+[project]
+name = "vox"
+version = "0.1.0"
+description = "Dictee vocale globale : transcription Whisper + reformulation LLM via OpenRouter"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28.1",
+    "keyboard>=0.13.5",
+    "numpy>=2.5.3",
+    "pyside6>=6.11.2",
+    "sounddevice>=0.5.6",
+]
+
+[project.scripts]
+vox = "vox.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vox"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "SIM", "RUF", "S", "DTZ", "LOG", "UP", "PYI"]
+# Les libelles francais utilisent legitimement des caracteres "ambigus"
+# (× pour la multiplication, ’ comme apostrophe).
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+# Application de bureau mono-utilisateur : la date locale naive est voulue.
+"src/vox/stats.py" = ["DTZ011"]
+# Les chemins de nettoyage (fermeture de flux, sons, presse-papier) doivent
+# rester silencieux : une erreur n'y a aucune valeur pour l'utilisateur.
+"src/vox/sounds.py" = ["S110"]
+"src/vox/recorder.py" = ["S110"]
+"src/vox/hotkey.py" = ["S110"]
+"src/vox/api.py" = ["S110"]
+# L'historique est un journal local : l'heure locale naive est volontaire.
+"src/vox/pipeline.py" = ["DTZ005"]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.22.3",
+]

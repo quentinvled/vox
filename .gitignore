@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+build/
+dist/
+dist-single/
+*.egg-info/
+.uv/
+.ruff_cache/
+dist-share/
