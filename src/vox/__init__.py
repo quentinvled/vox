@@ -1,4 +1,4 @@
 """Vox — dictee vocale globale (OpenRouter STT + reformulation LLM)."""
 
-__version__ = "0.2.6"
+__version__ = "0.2.7"
 APP_NAME = "Vox"
