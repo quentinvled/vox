@@ -34,6 +34,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.ruff.lint.per-file-ignores]
 # Application de bureau mono-utilisateur : la date locale naive est voulue.
 "src/vox/stats.py" = ["DTZ011"]
+"src/vox/updates.py" = ["DTZ011"]
 # Les chemins de nettoyage (fermeture de flux, sons, presse-papier) doivent
 # rester silencieux : une erreur n'y a aucune valeur pour l'utilisateur.
 "src/vox/sounds.py" = ["S110"]

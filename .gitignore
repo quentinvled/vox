@@ -9,3 +9,5 @@ dist-single/
 .uv/
 .ruff_cache/
 dist-share/
+dist-setup/
+release/*.exe

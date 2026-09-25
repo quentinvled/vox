@@ -1,4 +1,8 @@
-"""Point d'entree : `python -m vox` ou `vox`."""
+"""Point d'entree : `python -m vox` ou `vox`.
+
+Les imports Qt sont volontairement differes : les commandes en ligne de
+commande (dont `--uninstall`) n'ont pas besoin de charger PySide6.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +10,8 @@ import logging
 import platform
 import sys
 
-from PySide6.QtWidgets import QApplication, QMessageBox
-
 from . import __version__
-from .app import VoxApp, acquire_single_instance
 from .paths import log_file
-from .ui.widgets import make_app_icon
 
 log = logging.getLogger("vox")
 
@@ -32,6 +32,11 @@ def main() -> int:
         "--test-key",
         "--transcribe",
         "--stats",
+        "--uninstall",
+        "--where",
+        "--check-update",
+        "--write-manifest",
+        "--set-manifest-url",
         "--version",
         "-h",
         "--help",
@@ -43,6 +48,11 @@ def main() -> int:
 
 def main_gui() -> int:
     """Lance l'interface graphique."""
+    from PySide6.QtWidgets import QApplication
+
+    from .app import VoxApp, acquire_single_instance
+    from .ui.widgets import make_app_icon
+
     _configure_logging()
     log.info(
         "Vox %s — demarrage (fige=%s, arch=%s)",
@@ -89,6 +99,16 @@ def main_cli() -> int:
         help="force un fournisseur pour cette commande",
     )
     parser.add_argument("--stats", action="store_true", help="affiche les statistiques d'usage")
+    parser.add_argument("--uninstall", action="store_true", help="desinstalle Vox")
+    parser.add_argument("--silent", action="store_true", help="sans dialogue de confirmation")
+    parser.add_argument("--where", action="store_true", help="affiche les chemins utilises")
+    parser.add_argument("--check-update", action="store_true", help="verifie les mises a jour")
+    parser.add_argument(
+        "--write-manifest",
+        metavar="VERSION",
+        help="ecrit un gabarit de manifeste de mise a jour",
+    )
+    parser.add_argument("--set-manifest-url", metavar="URL", help="enregistre l'URL du manifeste")
     parser.add_argument("--transcribe", metavar="FICHIER_WAV", help="transcrit un fichier WAV")
     parser.add_argument("--version", action="store_true")
     args = parser.parse_args()
@@ -133,6 +153,58 @@ def main_cli() -> int:
         except Exception as exc:
             print(f"Echec : {exc}")
             return 1
+        return 0
+
+    if args.where:
+        from . import install
+        from .paths import data_dir
+
+        print(f"programme : {sys.executable}")
+        print(f"donnees   : {data_dir()}")
+        print(f"installe  : {install.installed_exe()}")
+        print(f"demarrage : {'active' if install.is_autostart_enabled() else 'desactive'}")
+        return 0
+
+    if args.uninstall:
+        from . import install
+
+        return install.uninstall(silent=args.silent)
+
+    if args.write_manifest:
+        from .updates import manifest_example
+
+        print(manifest_example(args.write_manifest), end="")
+        return 0
+
+    if args.set_manifest_url:
+        from . import config as config_module
+
+        current = config_module.load()
+        current.update_manifest_url = args.set_manifest_url
+        current.check_updates = True
+        config_module.save(current)
+        print(f"URL du manifeste enregistrée : {args.set_manifest_url}")
+        return 0
+
+    if args.check_update:
+        from . import config as config_module
+        from .updates import check
+
+        current = config_module.load()
+        if not current.update_manifest_url:
+            print("Aucune URL de manifeste configurée.")
+            print("Utilise : vox --set-manifest-url <URL>")
+            return 1
+        info, reason = check(current.update_manifest_url, __version__)
+        if info is None:
+            print(f"{reason} (version courante : {__version__})")
+            return 0
+        print(f"Mise à jour disponible : {info.version} (courante : {__version__})")
+        if info.published_at:
+            print(f"Publiée le : {info.published_at}")
+        if info.notes:
+            print(f"Nouveautés : {info.notes}")
+        print(f"Téléchargement : {info.url}")
         return 0
 
     if args.stats:
@@ -192,6 +264,8 @@ if __name__ == "__main__":
         raise
     except Exception as exc:
         log.exception("Erreur fatale")
+        from PySide6.QtWidgets import QApplication, QMessageBox
+
         app = QApplication.instance() or QApplication(sys.argv)
         QMessageBox.critical(None, "Vox", f"Erreur au demarrage :\n{exc}")
         raise SystemExit(1) from exc

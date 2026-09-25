@@ -13,7 +13,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
-from . import __version__, injector, models, sounds
+from . import __version__, injector, models, sounds, updates
 from . import config as config_module
 from .config import HOTKEY_CHOICES, Settings
 from .hotkey import EVENT_CANCEL, EVENT_START, EVENT_STOP, HotkeyManager
@@ -49,6 +49,21 @@ class _CatalogueLoader(QThread):
         self.loaded.emit(models.load(self._provider, self._api_key, force_refresh=self._force))
 
 
+class _UpdateChecker(QThread):
+    """Interroge le manifeste de version, hors du thread d'interface."""
+
+    checked = Signal(object, str)
+
+    def __init__(self, url: str, current: str, parent=None) -> None:
+        super().__init__(parent)
+        self._url = url
+        self._current = current
+
+    def run(self) -> None:
+        info, reason = updates.check(self._url, self._current)
+        self.checked.emit(info, reason)
+
+
 class VoxApp(QObject):
     """Controleur principal."""
 
@@ -62,6 +77,8 @@ class VoxApp(QObject):
         self._pending_enter = False
         self._recording_started_at = 0.0
         self._loader: _CatalogueLoader | None = None
+        self._update_checker: _UpdateChecker | None = None
+        self._update_info: updates.UpdateInfo | None = None
 
         self.pipeline = Pipeline(self.settings)
         self.hotkey = HotkeyManager(
@@ -96,6 +113,7 @@ class VoxApp(QObject):
         self.tray.copy_requested.connect(self.pipeline.copy_last)
         self.tray.settings_requested.connect(self.open_settings)
         self.tray.stats_requested.connect(self.open_stats)
+        self.tray.update_requested.connect(self.open_update)
         self.tray.quit_requested.connect(self.quit)
         self.tray.model_selected.connect(self.set_model)
         self.tray.reword_toggled.connect(self.set_reword_enabled)
@@ -129,6 +147,11 @@ class VoxApp(QObject):
         self._clock_timer.setInterval(200)
         self._clock_timer.timeout.connect(self._tick_clock)
 
+        # Verification des mises a jour : une fois au demarrage, puis 2x par jour.
+        self._update_timer = QTimer(self)
+        self._update_timer.setInterval(12 * 3600 * 1000)
+        self._update_timer.timeout.connect(self.check_updates)
+
     def start(self) -> None:
         self.overlay.restore_position(self.settings.overlay_position)
         self.overlay.set_state("idle", detail=f"{self.hotkey_label} pour dicter")
@@ -153,6 +176,9 @@ class VoxApp(QObject):
             QTimer.singleShot(1200, self.open_settings)
         elif self.settings.notify_on_start:
             QTimer.singleShot(900, self._greet)
+
+        QTimer.singleShot(6000, self.check_updates)
+        self._update_timer.start()
 
     def _greet(self) -> None:
         """Confirme visuellement que Vox tourne, même si l'icône est masquée."""
@@ -391,6 +417,43 @@ class VoxApp(QObject):
             self._commit_settings(window.values())
         self._settings_window = None
 
+    def check_updates(self) -> None:
+        """Interroge le manifeste de version (silencieux en cas d'echec)."""
+        if not self.settings.check_updates:
+            return
+        url = (self.settings.update_manifest_url or "").strip()
+        if not url:
+            return
+        self._update_checker = _UpdateChecker(url, __version__, self)
+        self._update_checker.checked.connect(self._on_update_checked)
+        self._update_checker.start()
+
+    def _on_update_checked(self, info: updates.UpdateInfo | None, reason: str) -> None:
+        if info is None:
+            log.info("Mise à jour : %s", reason)
+            return
+        self._update_info = info
+        log.info("Mise à jour disponible : %s", info.version)
+        self.tray.set_update_available(info.version)
+        notes = (info.notes or "").strip()
+        self.tray.showMessage(
+            f"Vox {info.version} est disponible",
+            (notes + "\n" if notes else "")
+            + "Clic droit sur l'icône → Mise à jour disponible…",
+            QSystemTrayIcon.Information,
+            12000,
+        )
+
+    def open_update(self) -> None:
+        """Ouvre la page de telechargement (jamais d'execution automatique)."""
+        info = self._update_info
+        target = (info.url if info and info.url else "") or self.settings.update_manifest_url
+        if not target:
+            self._on_notice("info", "Aucune adresse de mise à jour configurée.")
+            return
+        QDesktopServices.openUrl(QUrl(target))
+        self._on_notice("info", "Page de téléchargement ouverte dans le navigateur.")
+
     def open_stats(self) -> None:
         """Ouvre (ou ramene au premier plan) la fenetre de statistiques."""
         if self._stats_window is None:
@@ -447,6 +510,7 @@ class VoxApp(QObject):
         self._hotkey_timer.stop()
         self._level_timer.stop()
         self._clock_timer.stop()
+        self._update_timer.stop()
         self.hotkey.stop()
         self.pipeline.shutdown()
         self.tray.hide()

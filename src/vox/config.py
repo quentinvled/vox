@@ -96,6 +96,10 @@ class Settings:
     autostart: bool = False
     notify_on_start: bool = True
     show_in_taskbar: bool = False
+
+    # --- Mises a jour ---
+    check_updates: bool = True
+    update_manifest_url: str = ""
     show_overlay_on_result: bool = True
 
     # --- Divers ---

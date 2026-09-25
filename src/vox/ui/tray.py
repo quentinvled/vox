@@ -24,6 +24,7 @@ class Tray(QSystemTrayIcon):
     autostart_toggled = Signal(bool)
     taskbar_toggled = Signal(bool)
     stats_requested = Signal()
+    update_requested = Signal()
 
     def __init__(
         self,
@@ -52,9 +53,15 @@ class Tray(QSystemTrayIcon):
     def _build(self) -> None:
         self._menu.clear()
 
-        self.status_action = QAction("Vox", self._menu)
+        self.status_action = QAction(f"Vox {__version__}", self._menu)
         self.status_action.setEnabled(False)
         self._menu.addAction(self.status_action)
+
+        self.update_action = QAction("Mise à jour disponible…", self._menu)
+        self.update_action.triggered.connect(self.update_requested.emit)
+        self.update_action.setVisible(False)
+        self._menu.addAction(self.update_action)
+        self._menu.addSeparator()
 
         self.toggle_action = QAction(f"Dicter ({self._hotkey_label})", self._menu)
         self.toggle_action.triggered.connect(self.toggle_requested.emit)
@@ -178,8 +185,13 @@ class Tray(QSystemTrayIcon):
             action.setChecked(True)
 
     def set_status(self, text: str) -> None:
-        self.status_action.setText(text)
+        self.status_action.setText(f"Vox {__version__} — {text}")
         self.setToolTip(f"Vox {__version__}\n{text}\n{self._hotkey_label}")
+
+    def set_update_available(self, version: str) -> None:
+        """Fait apparaitre l'entree « Mise a jour disponible »."""
+        self.update_action.setText(f"Mise à jour {version} disponible…")
+        self.update_action.setVisible(True)
 
     # ------------------------------------------------------------------
     def _on_activated(self, reason) -> None:

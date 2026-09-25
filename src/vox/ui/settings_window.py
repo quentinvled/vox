@@ -234,6 +234,30 @@ class SettingsWindow(QDialog):
         trigger_form.addRow("", self.autostart_check)
 
         outer.addWidget(trigger_box)
+
+        # --- Mises a jour ---
+        update_box = QGroupBox("Mises à jour")
+        update_form = QFormLayout(update_box)
+
+        self.update_check = QCheckBox("Vérifier les mises à jour au démarrage")
+        update_form.addRow("", self.update_check)
+
+        self.manifest_edit = QLineEdit()
+        self.manifest_edit.setPlaceholderText("https://exemple.tld/vox/version.json")
+        update_form.addRow("URL du manifeste", self.manifest_edit)
+
+        update_hint = QLabel(
+            "Vox lit un petit fichier JSON publié par tes soins et compare son "
+            "numéro de version au sien. S'il est plus récent, une entrée « Mise à "
+            "jour disponible » apparaît dans le menu. Vox ne télécharge ni "
+            "n'exécute jamais rien tout seul : il ouvre simplement la page dans "
+            "ton navigateur."
+        )
+        update_hint.setObjectName("hint")
+        update_hint.setWordWrap(True)
+
+        outer.addWidget(update_box)
+        outer.addWidget(update_hint)
         outer.addStretch(1)
         return page
 
@@ -502,6 +526,8 @@ class SettingsWindow(QDialog):
         self._select_data(self.hotkey_mode_combo, settings.hotkey_mode)
         self.enter_check.setChecked(settings.double_tap_enter)
         self.autostart_check.setChecked(settings.autostart)
+        self.update_check.setChecked(settings.check_updates)
+        self.manifest_edit.setText(settings.update_manifest_url)
 
         index = self.device_combo.findData(settings.input_device)
         self.device_combo.setCurrentIndex(max(0, index))
@@ -564,6 +590,8 @@ class SettingsWindow(QDialog):
             hotkey_mode=self.hotkey_mode_combo.currentData(),
             double_tap_enter=self.enter_check.isChecked(),
             autostart=self.autostart_check.isChecked(),
+            check_updates=self.update_check.isChecked(),
+            update_manifest_url=self.manifest_edit.text().strip(),
             input_device=self.device_combo.currentData(),
             max_record_seconds=self.max_seconds_spin.value(),
             min_record_seconds=self.min_seconds_spin.value(),

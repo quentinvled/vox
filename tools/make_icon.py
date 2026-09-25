@@ -66,6 +66,11 @@ def main() -> int:
     out.write_bytes(build_ico(icon))
     print(f"{out} ecrit ({out.stat().st_size} octets, {len(SIZES)} tailles)")
 
+    # PNG 256 px : utilise par l'installeur tkinter, qui ne lit pas l'ICO.
+    png = ROOT / "assets" / "Vox.png"
+    icon.pixmap(256, 256).save(str(png), "PNG")
+    print(f"{png} ecrit ({png.stat().st_size} octets)")
+
     # relecture de controle
     check = QIcon(str(out))
     print("tailles relues :", sorted({s.width() for s in check.availableSizes()}))

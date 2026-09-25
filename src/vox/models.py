@@ -7,7 +7,11 @@ import json
 import time
 from dataclasses import dataclass, field
 
-from .api import GROQ_STT_PRICING, Client
+from .api import (
+    GROQ_STT_PRICING,
+    Client,
+)
+from .api import per_hour_from_catalogue as api_per_hour_from_catalogue
 from .paths import models_cache_file
 
 CACHE_TTL_SECONDS = 24 * 3600
@@ -87,6 +91,17 @@ def _write_cache(provider: str, stt: list[dict], chat: list[dict]) -> None:
         models_cache_file().write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
+def per_hour_from_catalogue(prompt: float | None) -> float | None:
+    """Convertit `pricing.prompt` du catalogue en dollars par heure.
+
+    L'unite du catalogue n'est pas homogene : les fournisseurs facturant a la
+    seconde (Groq, DeepInfra) exposent un prix par seconde, alors qu'Azure
+    expose directement un prix par heure. Mesure faite sur
+    `microsoft/mai-transcribe-2` : 0,1 correspond bien a 0,10 $/h.
+    """
+    return api_per_hour_from_catalogue(prompt)
+
+
 def _sort_preferred(items: list[dict], preferred: list[str]) -> list[dict]:
     def key(item: dict):
         model_id = item.get("id") or ""
@@ -159,16 +174,46 @@ def load(provider: str = "openrouter", api_key: str = "", force_refresh: bool = 
         return result
 
     _write_cache(provider, stt, chat)
+    _merge_measured_rates(stt)
     return Catalogue(stt=stt, chat=chat, provider=provider, fetched_at=time.time())
 
 
-def label(item: dict) -> str:
-    """Libelle affiche dans les listes deroulantes."""
+def _merge_measured_rates(items: list[dict]) -> None:
+    """Ajoute a chaque modele le tarif reellement observe dans l'historique."""
+    from .stats import measured_rates
+
+    try:
+        rates = measured_rates()
+    except Exception:
+        return
+    for item in items:
+        found = rates.get(item.get("id") or "")
+        if found:
+            item["measured_per_hour"] = round(found.per_hour, 4)
+            item["measured_seconds"] = round(found.seconds, 1)
+
+
+def label(item: dict, measured: float | None = None) -> str:
+    """Libelle des listes deroulantes.
+
+    Le tarif mesure dans ton historique prime sur l'estimation du catalogue,
+    elle-meme marquee d'un « ~ » pour signaler qu'elle est approximative.
+    """
     name = item.get("name") or item.get("id") or "?"
+    rate = measured or item.get("measured_per_hour")
+    if rate:
+        return f"{name}  ·  {rate:.3f} $/h"
     per_hour = item.get("per_hour")
     if per_hour:
-        return f"{name}  ·  {per_hour:.3f} $/h"
+        return f"{name}  ·  ~{per_hour:.3f} $/h"
     return name
 
 
-__all__ = ["GROQ_STT_PRICING", "Catalogue", "fallback", "label", "load"]
+__all__ = [
+    "GROQ_STT_PRICING",
+    "Catalogue",
+    "fallback",
+    "label",
+    "load",
+    "per_hour_from_catalogue",
+]

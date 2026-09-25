@@ -45,6 +45,28 @@ GROQ_STT_PRICING = {
     "whisper-large-v3-turbo": 0.04,
 }
 
+# Au-dela de ce tarif horaire, la valeur du catalogue n'est pas exprimee en
+# dollars par seconde : certains fournisseurs publient directement un tarif
+# horaire. Une transcription coute en pratique 0,01 a 1 $/h.
+MAX_PLAUSIBLE_PER_HOUR = 5.0
+
+
+def per_hour_from_catalogue(prompt: float | None) -> float | None:
+    """Convertit `pricing.prompt` du catalogue en dollars par heure.
+
+    L'unite du catalogue OpenRouter n'est pas homogene : les fournisseurs
+    facturant a la seconde (Groq, DeepInfra, OpenAI...) exposent un prix par
+    seconde, alors qu'Azure expose directement un prix par heure. Mesure faite
+    sur `microsoft/mai-transcribe-2` : 0,1 dans le catalogue correspond bien a
+    0,10 $/h, et non a 360 $/h comme le laissait croire un × 3600 aveugle.
+    """
+    if not prompt:
+        return None
+    per_hour = float(prompt) * 3600.0
+    if per_hour > MAX_PLAUSIBLE_PER_HOUR:
+        return float(prompt)
+    return per_hour
+
 
 @dataclass(frozen=True)
 class Provider:
@@ -338,12 +360,14 @@ class Client:
             self._raise_for_error(response)
             out = []
             for model in response.json().get("data") or []:
-                per_second = _to_float((model.get("pricing") or {}).get("prompt"))
+                per_hour = per_hour_from_catalogue(
+                    _to_float((model.get("pricing") or {}).get("prompt"))
+                )
                 out.append(
                     {
                         "id": model.get("id"),
                         "name": model.get("name") or model.get("id"),
-                        "per_hour": round(per_second * 3600, 4) if per_second else None,
+                        "per_hour": round(per_hour, 4) if per_hour else None,
                     }
                 )
             out.sort(key=lambda m: (m["per_hour"] is None, m["per_hour"] or 0))

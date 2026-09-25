@@ -169,6 +169,49 @@ def _count_words(text: str) -> int:
     return len((text or "").split())
 
 
+@dataclass
+class MeasuredRate:
+    """Tarif effectivement constate pour un modele, d'apres l'historique."""
+
+    model: str
+    per_hour: float = 0.0
+    seconds: float = 0.0
+    cost: float = 0.0
+    dictations: int = 0
+
+
+def measured_rates(
+    entries: list[dict] | None = None, min_seconds: float = 8.0
+) -> dict[str, MeasuredRate]:
+    """Tarif horaire reel par modele, mesure sur tes propres dictees.
+
+    C'est la seule source fiable : l'unite du catalogue OpenRouter n'est pas
+    homogene selon les fournisseurs (voir `api.per_hour_from_catalogue`).
+    Les modeles vus sur moins de `min_seconds` d'audio sont ignores, leur taux
+    etant trop bruite.
+    """
+    rows = load_entries() if entries is None else entries
+    acc: dict[str, MeasuredRate] = {}
+    for row in rows:
+        model = row.get("model") or ""
+        seconds = _to_float(row.get("seconds"))
+        if not model or seconds <= 0:
+            continue
+        cost = _to_float(row.get("cost")) + _to_float(row.get("reword_cost"))
+        entry = acc.setdefault(model, MeasuredRate(model=model))
+        entry.seconds += seconds
+        entry.cost += cost
+        entry.dictations += 1
+
+    out: dict[str, MeasuredRate] = {}
+    for model, entry in acc.items():
+        if entry.seconds < min_seconds:
+            continue
+        entry.per_hour = entry.cost / (entry.seconds / 3600.0)
+        out[model] = entry
+    return out
+
+
 def load_entries(path=None) -> list[dict]:
     """Lit l'historique en ignorant les lignes corrompues."""
     target = path or history_file()

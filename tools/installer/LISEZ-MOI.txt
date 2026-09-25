@@ -1,0 +1,63 @@
+VOX @VERSION@ — dictee vocale pour Windows
+==========================================
+
+Tenir Ctrl + Maj, parler, relacher : le texte s'ecrit tout seul dans la
+fenetre active.
+
+
+INSTALLATION
+------------
+1. Double-clique sur Vox-Setup-@VERSION@.exe
+2. Windows affichera peut-etre « Windows a protege votre PC » (l'installateur
+   n'est pas signe numeriquement) : clique sur « Informations
+   complementaires », puis « Executer quand meme ».
+3. L'installation se fait dans ton dossier personnel, sans droits
+   administrateur. Des raccourcis sont crees sur le Bureau et dans le Menu
+   Demarrer.
+4. Au premier lancement, la fenetre de reglages s'ouvre : colle ta cle
+   OpenRouter (voir plus bas), clique sur « Tester », puis « Enregistrer ».
+5. Vox n'a pas de fenetre principale : il vit dans la zone de notification,
+   derriere le chevron ^ en bas a droite pres de l'horloge.
+
+
+OBTENIR UNE CLE OPENROUTER
+--------------------------
+1. Cree un compte sur https://openrouter.ai
+2. Ajoute environ 2 $ de credit sur https://openrouter.ai/credits
+   (la dictee coute ~0,1 $ par heure d'audio, donc 2 $ durent tres longtemps)
+3. Cree une cle sur https://openrouter.ai/settings/keys
+4. Colle-la dans les reglages de Vox
+
+
+UTILISATION
+-----------
+- Ctrl + Maj (maintenu) : enregistre tant que tu tiens la combinaison,
+  insere le texte au relachement. Un son confirme le debut et la fin.
+- Clic droit sur l'icone -> Affichage -> « Garder dans la barre des taches »
+  pour le voir en permanence plutot que derriere le chevron.
+- Clic droit -> Statistiques : temps gagne, mots ecrits, latence, cout,
+  modeles utilises.
+- Clic droit -> Reglages : modele de transcription, raccourci, micro,
+  vocabulaire (noms propres que la reconnaissance doit connaitre),
+  reformulation automatique (nettoyage, e-mail, traduction...).
+- Clic droit -> « Ou est mon icone ? » : aide si tu ne la trouves pas.
+
+
+TES DONNEES
+-----------
+%LOCALAPPDATA%\Vox\
+   history.jsonl   historique local des dictees
+   settings.json   reglages
+   vox.log         journal en cas de probleme
+   sons\           signaux sonores (ecoutables)
+%LOCALAPPDATA%\Programs\Vox\
+   Vox.exe         le programme (ton .env s'y trouve si tu l'utilises)
+
+Rien n'est envoye nulle part, sauf l'audio de chaque dictee au service de
+transcription choisi (via OpenRouter).
+
+
+DESINSTALLATION
+---------------
+Parametres > Applications > Vox > Desinstaller.
+Il te sera demande si tu veux aussi supprimer ton historique et ta cle.
