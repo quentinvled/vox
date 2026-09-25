@@ -19,6 +19,7 @@ CACHE_TTL_SECONDS = 24 * 3600
 # Repli si le reseau est indisponible (tarifs indicatifs $/h d'audio).
 FALLBACK_STT: dict[str, list[dict]] = {
     "openrouter": [
+        {"id": "microsoft/mai-transcribe-2", "name": "MAI-Transcribe 2 (Microsoft)", "per_hour": 0.10},
         {"id": "qwen/qwen3-asr-1.7b", "name": "Qwen3 ASR 1.7B (rapide)", "per_hour": 0.027},
         {"id": "google/gemini-3.5-transcribe", "name": "Gemini 3.5 Transcribe (precis)", "per_hour": 0.007},
         {"id": "openai/whisper-large-v3-turbo", "name": "Whisper Large v3 Turbo", "per_hour": 0.012},
@@ -56,6 +57,7 @@ FALLBACK_CHAT: dict[str, list[dict]] = {
 
 # Modeles recommandes, mis en avant en tete de liste.
 PREFERRED_STT = [
+    "microsoft/mai-transcribe-2",
     "qwen/qwen3-asr-1.7b",
     "google/gemini-3.5-transcribe",
     "openai/whisper-large-v3-turbo",

@@ -17,9 +17,9 @@ from .paths import config_file, data_dir, project_root
 
 # --- Modeles par defaut ---------------------------------------------------
 
-# Defaut choisi sur mesures (voir README) : le plus rapide ET exact sur des
-# clips francais, ~4x moins cher que Gemini Transcribe.
-DEFAULT_STT_MODEL = "qwen/qwen3-asr-1.7b"
+# Defaut choisi sur mesures : le plus rapide ET exact sur des clips francais.
+# MAI-Transcribe 2 (Microsoft) est multilingue et identifie la langue tout seul.
+DEFAULT_STT_MODEL = "microsoft/mai-transcribe-2"
 # Alternative « qualite maximale » (meilleure sur les noms propres, 3x plus lente).
 QUALITY_STT_MODEL = "google/gemini-3.5-transcribe"
 DEFAULT_CHAT_MODEL = "google/gemini-2.5-flash"
