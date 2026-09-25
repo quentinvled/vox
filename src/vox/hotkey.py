@@ -77,7 +77,7 @@ class _WindowsPoller:
     par la machine a etats.
     """
 
-    INTERVAL = 0.02
+    INTERVAL = 0.012
     # VK_LSHIFT/RSHIFT, LCONTROL/RCONTROL, LMENU/RMENU, LWIN/RWIN.
     _MODIFIERS: tuple[tuple[int, str], ...] = (
         (0xA0, "left shift"),

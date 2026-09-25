@@ -32,7 +32,11 @@ class Recorder:
         self.device = device
         self.max_seconds = max_seconds
 
+        # Le peripherique reste ouvert entre les dictees (« micro chaud ») :
+        # c'est l'ouverture de PortAudio qui coute cher, pas le demarrage de la
+        # capture. On evite ainsi le delai ressenti a chaque appui.
         self._stream: sd.InputStream | None = None
+        self._active = False
         self._frames: list[np.ndarray] = []
         self._started_at = 0.0
         self._level = 0.0
@@ -66,7 +70,7 @@ class Recorder:
 
     @property
     def recording(self) -> bool:
-        return self._stream is not None
+        return self._active
 
     @property
     def hit_max(self) -> bool:
@@ -80,7 +84,7 @@ class Recorder:
 
     # ------------------------------------------------------------------
     def _callback(self, indata, _frames, _time_info, status) -> None:
-        if self._stream is None:
+        if not self._active:
             return
         chunk = indata.copy()
         self._frames.append(chunk)
@@ -99,15 +103,8 @@ class Recorder:
             self.stop()
 
     # ------------------------------------------------------------------
-    def start(self) -> None:
-        if self._stream is not None:
-            return
-        self._frames = []
-        self._level = 0.0
-        self._peak = 0.0
-        self._max_peak = 0.0
-        self._hit_max = False
-        try:
+    def _open_stream(self) -> sd.InputStream:
+        if self._stream is None:
             self._stream = sd.InputStream(
                 samplerate=self.samplerate,
                 channels=1,
@@ -115,17 +112,28 @@ class Recorder:
                 device=self.device,
                 callback=self._callback,
             )
-            self._stream.start()
-        except Exception as exc:
-            self._stream = None
-            raise RecorderError(
-                f"Impossible d'ouvrir le micro ({exc}). Vérifie le périphérique "
-                "d'entrée dans les réglages."
-            ) from exc
-        self._started_at = time.monotonic()
+        return self._stream
 
-    # ------------------------------------------------------------------
-    def _detach(self) -> list[np.ndarray]:
+    def warm(self) -> None:
+        """Ouvre le peripherique a l'avance, sans capturer.
+
+        L'ouverture de PortAudio est ce qui coute cher ; la faire au demarrage
+        supprime le delai ressenti au premier appui sur le raccourci.
+        """
+        try:
+            self._open_stream()
+        except Exception:
+            self._stream = None
+
+    def configure(self, samplerate: int, device: int | None, max_seconds: int) -> None:
+        """Met a jour les parametres ; rouvre le peripherique si necessaire."""
+        if samplerate != self.samplerate or device != self.device:
+            self._close_stream()
+        self.samplerate = samplerate
+        self.device = device
+        self.max_seconds = max_seconds
+
+    def _close_stream(self) -> None:
         stream, self._stream = self._stream, None
         if stream is not None:
             try:
@@ -133,19 +141,53 @@ class Recorder:
                 stream.close()
             except Exception:
                 pass
-        frames, self._frames = self._frames, []
-        return frames
+
+    def close(self) -> None:
+        """Libere le peripherique (a l'arret de l'application)."""
+        self._active = False
+        self._close_stream()
+
+    def start(self) -> None:
+        if self._active:
+            return
+        self._frames = []
+        self._level = 0.0
+        self._peak = 0.0
+        self._max_peak = 0.0
+        self._hit_max = False
+        try:
+            stream = self._open_stream()
+            stream.start()
+        except Exception as exc:
+            self._close_stream()
+            raise RecorderError(
+                f"Impossible d'ouvrir le micro ({exc}). Vérifie le périphérique "
+                "d'entrée dans les réglages."
+            ) from exc
+        self._active = True
+        self._started_at = time.monotonic()
+
+    def _stop_stream(self) -> None:
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+            except Exception:
+                pass
 
     def stop(self) -> bytes:
-        """Arrete et renvoie le WAV (bytes)."""
-        frames = self._detach()
+        """Arrete la capture et renvoie le WAV (bytes)."""
+        self._active = False
+        self._stop_stream()
+        frames, self._frames = self._frames, []
         self._level = 0.0
         if not frames:
             return b""
         return _encode_wav(np.concatenate(frames, axis=0), self.samplerate)
 
     def cancel(self) -> None:
-        self._detach()
+        self._active = False
+        self._stop_stream()
+        self._frames = []
         self._level = 0.0
 
 

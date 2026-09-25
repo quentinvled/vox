@@ -68,11 +68,42 @@ class Stats:
     tones: Counter = field(default_factory=Counter)
     languages: Counter = field(default_factory=Counter)
     days: list[DayPoint] = field(default_factory=list)
+    # Repartition par heure de la journee (index 0-23).
+    hourly: list[int] = field(default_factory=lambda: [0] * 24)
+    hourly_words: list[int] = field(default_factory=lambda: [0] * 24)
+
+    # Complement issus de l'historique.
+    reword_count: int = 0
+    reword_cost: float = 0.0
+    max_recording_seconds: float = 0.0
 
     # ------------------------------------------------------------------
     @property
     def active_days(self) -> int:
         return len([d for d in self.days if d.dictations])
+
+    @property
+    def transcription_seconds(self) -> float:
+        """Temps total passe a attendre la transcription (somme des latences)."""
+        return self.latency_seconds
+
+    @property
+    def avg_recording_seconds(self) -> float:
+        return self.audio_seconds / self.entries if self.entries else 0.0
+
+    @property
+    def avg_words(self) -> float:
+        return self.words / self.entries if self.entries else 0.0
+
+    @property
+    def reword_share(self) -> float:
+        return self.reword_count / self.entries if self.entries else 0.0
+
+    @property
+    def peak_hour(self) -> int:
+        if not any(self.hourly):
+            return -1
+        return max(range(24), key=lambda h: self.hourly[h])
 
     @property
     def median_latency_ms(self) -> int:
@@ -233,14 +264,33 @@ def load_entries(path=None) -> list[dict]:
     return entries
 
 
+def _parse_at(value) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 def compute(
     entries: list[dict] | None = None,
     *,
     typing_wpm: float = DEFAULT_TYPING_WPM,
     window_days: int = 30,
+    since: datetime | None = None,
 ) -> Stats:
-    """Agrege l'historique en indicateurs."""
+    """Agrege l'historique en indicateurs.
+
+    `since` restreint aux dictees posterieures a cette date (None = tout).
+    """
     rows = load_entries() if entries is None else entries
+    if since is not None:
+        rows = [
+            row
+            for row in rows
+            if (moment := _parse_at(row.get("at"))) is None or moment >= since
+        ]
     stats = Stats(entries=len(rows), typing_wpm=typing_wpm)
     if not rows:
         return stats
@@ -259,17 +309,15 @@ def compute(
         stats.characters += len(text)
         stats.audio_seconds += seconds
         stats.cost += cost
+        stats.reword_cost += _to_float(row.get("reword_cost"))
+        if row.get("tone"):
+            stats.reword_count += 1
+        stats.max_recording_seconds = max(stats.max_recording_seconds, seconds)
         if latency:
             stats.latencies_ms.append(latency)
 
         # horodatage
-        moment: datetime | None = None
-        raw_at = row.get("at")
-        if isinstance(raw_at, str):
-            try:
-                moment = datetime.fromisoformat(raw_at)
-            except ValueError:
-                moment = None
+        moment = _parse_at(row.get("at"))
         if moment is not None:
             if stats.first_at is None or moment < stats.first_at:
                 stats.first_at = moment
@@ -299,6 +347,8 @@ def compute(
             point.words += words
             point.seconds += seconds
             point.cost += cost
+            stats.hourly[moment.hour] += 1
+            stats.hourly_words[moment.hour] += words
 
     stats.models = sorted(per_model.values(), key=lambda m: -m.dictations)
 

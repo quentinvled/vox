@@ -140,7 +140,7 @@ class VoxApp(QObject):
         self.pipeline.retranscribed.connect(self._on_retranscribed)
 
         self._hotkey_timer = QTimer(self)
-        self._hotkey_timer.setInterval(35)
+        self._hotkey_timer.setInterval(15)
         self._hotkey_timer.timeout.connect(self._drain_hotkey)
 
         self._level_timer = QTimer(self)
@@ -167,6 +167,9 @@ class VoxApp(QObject):
         else:
             self.overlay.hide_pill()
         sounds.dump_wavs()
+        # Micro « chaud » : on ouvre le peripherique des maintenant pour que le
+        # premier appui sur le raccourci demarre instantanement.
+        self.pipeline.recorder.warm()
         # Purge des vieux enregistrements, en tache de fond pour ne pas retarder
         # le demarrage.
         QTimer.singleShot(4000, self._prune_recordings)
@@ -462,6 +465,7 @@ class VoxApp(QObject):
             window.accept()
 
         window.open_recordings_requested.connect(_on_open_recordings)
+        window.dashboard_requested.connect(self.open_stats)
 
         def _on_finished(result: int) -> None:
             self._settings_window = None
@@ -520,9 +524,10 @@ class VoxApp(QObject):
             window.show_updates_tab()
 
     def open_stats(self) -> None:
-        """Ouvre (ou ramene au premier plan) la fenetre de statistiques."""
+        """Ouvre (ou ramene au premier plan) le tableau de bord."""
         if self._stats_window is None:
             self._stats_window = StatsWindow(self.settings)
+            self._stats_window.history_requested.connect(self.open_recordings)
         self._stats_window.apply_theme(self.settings.theme)
         self._stats_window.refresh()
         self._stats_window.show()

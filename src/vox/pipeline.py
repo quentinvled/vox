@@ -92,9 +92,9 @@ class Pipeline(QObject):
 
     def apply_settings(self, settings: Settings) -> None:
         self.settings = settings
-        self.recorder.samplerate = settings.sample_rate
-        self.recorder.device = settings.input_device
-        self.recorder.max_seconds = settings.max_record_seconds
+        self.recorder.configure(
+            settings.sample_rate, settings.input_device, settings.max_record_seconds
+        )
 
     # ------------------------------------------------------------------
     # Enregistrement
@@ -463,8 +463,7 @@ class Pipeline(QObject):
             pass
 
     def shutdown(self) -> None:
-        if self._recording:
-            self.recorder.cancel()
+        self.recorder.close()
         self.worker.shutdown()
         if self._cached_client is not None:
             self._cached_client.close()

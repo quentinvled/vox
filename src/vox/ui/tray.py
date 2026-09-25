@@ -64,6 +64,23 @@ class Tray(QSystemTrayIcon):
         self._menu.addAction(self.update_action)
         self._menu.addSeparator()
 
+        settings_action = QAction("Réglages…", self._menu)
+        settings_action.triggered.connect(self.settings_requested.emit)
+        self._menu.addAction(settings_action)
+
+        dashboard_action = QAction("Tableau de bord…", self._menu)
+        dashboard_action.setToolTip("Temps gagné, modèles, dépenses, statistiques d'usage")
+        dashboard_action.triggered.connect(self.stats_requested.emit)
+        self._menu.addAction(dashboard_action)
+
+        history_action = QAction("Historique des enregistrements…", self._menu)
+        history_action.setToolTip(
+            "Réécouter les dictées conservées, copier leur texte, les retranscrire"
+        )
+        history_action.triggered.connect(self.history_requested.emit)
+        self._menu.addAction(history_action)
+        self._menu.addSeparator()
+
         self.toggle_action = QAction(f"Dicter ({self._hotkey_label})", self._menu)
         self.toggle_action.triggered.connect(self.toggle_requested.emit)
         self._menu.addAction(self.toggle_action)
@@ -79,19 +96,6 @@ class Tray(QSystemTrayIcon):
         self.taskbar_action.setChecked(self._show_in_taskbar)
         self.taskbar_action.toggled.connect(self.taskbar_toggled.emit)
         display_menu.addAction(self.taskbar_action)
-
-        self._menu.addSeparator()
-
-        stats_action = QAction("Statistiques…", self._menu)
-        stats_action.triggered.connect(self.stats_requested.emit)
-        self._menu.addAction(stats_action)
-
-        history_action = QAction("Enregistrements…", self._menu)
-        history_action.setToolTip(
-            "Réécouter les dictées conservées, copier leur texte, les retranscrire"
-        )
-        history_action.triggered.connect(self.history_requested.emit)
-        self._menu.addAction(history_action)
 
         icon_help = QAction("Où est mon icône ?", display_menu)
         icon_help.triggered.connect(self.icon_help_requested.emit)
@@ -142,10 +146,6 @@ class Tray(QSystemTrayIcon):
         self._menu.addAction(self.autostart_action)
 
         self._menu.addSeparator()
-
-        settings_action = QAction("Réglages…", self._menu)
-        settings_action.triggered.connect(self.settings_requested.emit)
-        self._menu.addAction(settings_action)
 
         quit_action = QAction("Quitter", self._menu)
         quit_action.triggered.connect(self.quit_requested.emit)
@@ -203,5 +203,9 @@ class Tray(QSystemTrayIcon):
 
     # ------------------------------------------------------------------
     def _on_activated(self, reason) -> None:
+        # Clic gauche (ou double-clic) : on ouvre la grande fenetre de reglages,
+        # pas la pilule. Clic droit : le menu contextuel (comportement Qt).
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
-            self.show_requested.emit()
+            self.settings_requested.emit()
+        elif reason == QSystemTrayIcon.MiddleClick:
+            self.toggle_requested.emit()

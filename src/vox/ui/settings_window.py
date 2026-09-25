@@ -183,6 +183,7 @@ class SettingsWindow(QDialog):
     """Boîte de dialogue de configuration."""
 
     open_recordings_requested = Signal()
+    dashboard_requested = Signal()
 
     def __init__(self, settings: Settings, catalogue: Catalogue, parent=None) -> None:
         super().__init__(parent)
@@ -213,7 +214,20 @@ class SettingsWindow(QDialog):
 
         title = QLabel("Réglages")
         title.setObjectName("sectionTitle")
-        layout.addWidget(title)
+        header = QHBoxLayout()
+        header.addWidget(title)
+        header.addStretch(1)
+        self.dashboard_button = QPushButton("Tableau de bord")
+        self.dashboard_button.setToolTip(
+            "Temps gagné, modèles, dépenses, statistiques d'usage"
+        )
+        self.dashboard_button.clicked.connect(self.dashboard_requested.emit)
+        header.addWidget(self.dashboard_button)
+        self.history_button = QPushButton("Historique")
+        self.history_button.setToolTip("Réécouter les dictées conservées, copier leur texte")
+        self.history_button.clicked.connect(self.open_recordings_requested.emit)
+        header.addWidget(self.history_button)
+        layout.addLayout(header)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._scrollable(self._build_general()), "Général")

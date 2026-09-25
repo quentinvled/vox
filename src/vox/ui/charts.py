@@ -283,3 +283,94 @@ class StatRow(QWidget):
 
     def set(self, value: str) -> None:
         self.value.setText(value)
+
+
+class HourlyChart(QWidget):
+    """Repartition des dictees selon l'heure de la journee (0 a 23 h)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setMinimumHeight(150)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMouseTracking(True)
+        self._hours: list[int] = [0] * 24
+        self._words: list[int] = [0] * 24
+        self._theme = "dark"
+        self._bars: list[tuple[QRectF, int]] = []
+
+    def set_theme(self, theme: str) -> None:
+        self._theme = theme
+        self.update()
+
+    def set_hours(self, hours: list[int], words: list[int] | None = None) -> None:
+        self._hours = list(hours) if hours else [0] * 24
+        self._words = list(words) if words else [0] * 24
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        colors = palette(self._theme)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        left, right, top, bottom = 34.0, 8.0, 12.0, 24.0
+        plot_width = max(1.0, self.width() - left - right)
+        plot_height = max(1.0, self.height() - top - bottom)
+        peak = max(self._hours) or 1
+
+        grid_pen = QPen(QColor(colors["border"]))
+        painter.setPen(grid_pen)
+        for step in range(3):
+            y = top + plot_height * step / 2
+            painter.drawLine(QPointF(left, y), QPointF(left + plot_width, y))
+
+        label_font = QFont(self.font())
+        label_font.setPointSizeF(max(7.0, self.font().pointSizeF() - 1.5))
+        painter.setFont(label_font)
+
+        slot = plot_width / 24
+        bar_width = max(2.0, slot * 0.62)
+        self._bars = []
+        peak_hour = max(range(24), key=lambda h: self._hours[h]) if any(self._hours) else -1
+
+        for hour, value in enumerate(self._hours):
+            x = left + hour * slot + (slot - bar_width) / 2
+            height = (value / peak) * plot_height if value else 0.0
+            rect = QRectF(x, top + plot_height - max(height, 2.0 if value else 0.0), bar_width, max(height, 0.0))
+            self._bars.append((QRectF(x, top, bar_width, plot_height), hour))
+            if value <= 0:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor(colors["border"]))
+                painter.drawRoundedRect(QRectF(x, top + plot_height - 2, bar_width, 2), 1, 1)
+                continue
+            path = QPainterPath()
+            path.addRoundedRect(rect, min(4.0, bar_width / 2.0), min(4.0, bar_width / 2.0))
+            gradient = QLinearGradient(0, rect.top(), 0, rect.bottom())
+            if hour == peak_hour:
+                gradient.setColorAt(0.0, QColor(colors["wave_hi"]))
+                gradient.setColorAt(1.0, QColor(colors["wave_hi"]))
+            else:
+                gradient.setColorAt(0.0, QColor(colors["wave_hi"]))
+                gradient.setColorAt(1.0, QColor(colors["wave_lo"]))
+            painter.setPen(Qt.NoPen)
+            painter.fillPath(path, QBrush(gradient))
+
+        painter.setPen(QPen(QColor(colors["muted"])))
+        painter.drawText(QRectF(0, top - 4, left - 6, 16), Qt.AlignRight | Qt.AlignVCenter, str(peak))
+        painter.drawText(QRectF(0, top + plot_height - 8, left - 6, 16), Qt.AlignRight | Qt.AlignVCenter, "0")
+        for hour in (0, 6, 12, 18, 23):
+            x = left + hour * slot + slot / 2
+            painter.drawText(QRectF(x - 16, top + plot_height + 4, 32, 16), Qt.AlignCenter, f"{hour:02d}h")
+        painter.end()
+
+    def mouseMoveEvent(self, event) -> None:
+        point = event.position()
+        for rect, hour in self._bars:
+            if rect.contains(point):
+                self.setToolTip(
+                    f"{hour:02d}h – {hour + 1:02d}h\n"
+                    f"{self._hours[hour]} dictée(s)\n"
+                    f"{self._words[hour]:,} mot(s)".replace(",", " ")
+                )
+                return
+        self.setToolTip("")
+
