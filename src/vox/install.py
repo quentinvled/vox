@@ -255,6 +255,20 @@ def remove_shortcuts() -> None:
 def register_uninstall(version: str, exe: Path | None = None) -> None:
     """Ajoute Vox a « Applications et fonctionnalites »."""
     target = exe or installed_exe()
+    # Taille affichee dans « Applications et fonctionnalites » : somme reelle des
+    # fichiers installes, en Ko (le dossier contient surtout Vox.exe).
+    try:
+        size_kb = max(
+            1,
+            sum(
+                child.stat().st_size
+                for child in target.parent.iterdir()
+                if child.is_file()
+            )
+            // 1024,
+        )
+    except OSError:
+        size_kb = 60_000
     try:
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY, 0, winreg.KEY_WRITE) as key:
             values = {
@@ -270,7 +284,7 @@ def register_uninstall(version: str, exe: Path | None = None) -> None:
                 winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
             for name in ("NoModify", "NoRepair"):
                 winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, 1)
-            winreg.SetValueEx(key, "EstimatedSize", 0, winreg.REG_DWORD, 60_000)
+            winreg.SetValueEx(key, "EstimatedSize", 0, winreg.REG_DWORD, size_kb)
     except OSError:
         pass
 
