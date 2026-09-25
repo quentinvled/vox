@@ -14,10 +14,13 @@ pousses dans une file, consommee par le thread principal via un QTimer.
 from __future__ import annotations
 
 import contextlib
+import logging
 import queue
 import sys
 import threading
 import time
+
+log = logging.getLogger("vox")
 
 # Evenements semantiques
 EVENT_START = "start"
@@ -88,6 +91,9 @@ class HotkeyManager:
         self._handler = None
         self._lock = threading.Lock()
         self._error: str | None = None
+        # Nombre d'evenements clavier reellement recus : sert de temoin pour
+        # verifier que le hook fonctionne (0 = bloque par l'environnement).
+        self.seen = 0
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -147,11 +153,19 @@ class HotkeyManager:
         except Exception as exc:
             self._error = f"Bibliothèque 'keyboard' indisponible : {exc}"
             return
-        try:
-            self._handler = keyboard.hook(self._on_keyboard_event, suppress=False)
-        except Exception as exc:
-            self._error = f"Impossible d'installer le raccourci global : {exc}"
-            self._handler = None
+        # Un antivirus peut refuser le hook au premier essai : on retente.
+        last: Exception | None = None
+        for _attempt in range(3):
+            try:
+                self._handler = keyboard.hook(self._on_keyboard_event, suppress=False)
+                self._error = None
+                log.info("Hook clavier Windows installe.")
+                return
+            except Exception as exc:  # pragma: no cover - depend du systeme
+                last = exc
+                time.sleep(0.15)
+        self._error = f"Impossible d'installer le raccourci global : {last}"
+        self._handler = None
 
     def _start_pynput(self) -> None:
         try:
@@ -159,17 +173,24 @@ class HotkeyManager:
         except Exception as exc:
             self._error = f"Bibliothèque 'pynput' indisponible : {exc}"
             return
-        try:
-            listener = keyboard.Listener(
-                on_press=self._on_pynput_press,
-                on_release=self._on_pynput_release,
-                suppress=False,
-            )
-            listener.start()
-        except Exception as exc:
-            self._error = f"Impossible d'installer le raccourci global : {exc}"
-            return
-        self._handler = listener
+        last: Exception | None = None
+        for _attempt in range(3):
+            try:
+                listener = keyboard.Listener(
+                    on_press=self._on_pynput_press,
+                    on_release=self._on_pynput_release,
+                    suppress=False,
+                )
+                listener.start()
+                self._handler = listener
+                self._error = None
+                log.info("Ecoute clavier X11 (pynput) installee.")
+                return
+            except Exception as exc:  # pragma: no cover - depend du systeme
+                last = exc
+                time.sleep(0.15)
+        self._error = f"Impossible d'installer le raccourci global : {last}"
+        self._handler = None
 
     def stop(self) -> None:
         if self._handler is None:
@@ -208,6 +229,13 @@ class HotkeyManager:
         lowered = (name or "").lower()
         if lowered in _IGNORED:
             return
+        self.seen += 1
+        if self.seen == 1:
+            log.info(
+                "Premier evenement clavier recu : %s (%s)",
+                lowered,
+                "appui" if is_down else "relachement",
+            )
         group = self._group_of(lowered)
 
         with self._lock:

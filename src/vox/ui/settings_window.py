@@ -5,14 +5,13 @@ from __future__ import annotations
 import dataclasses
 import sys
 
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -22,19 +21,19 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from .. import recordings
+from .. import __version__, recordings
 from ..api import PROVIDERS, Client
 from ..config import HOTKEY_CHOICES, HOTKEY_MODIFIERS, Settings
 from ..models import Catalogue
 from ..models import label as model_label
 from ..recorder import list_input_devices
 from ..reword import TONES
+from .wheel import NoWheelComboBox, NoWheelDoubleSpinBox, NoWheelSpinBox
 
 LANGUAGES: list[tuple[str, str]] = [
     ("", "Détection automatique"),
@@ -137,6 +136,23 @@ class _KeyTester(QThread):
         self.tested.emit(True, detail)
 
 
+class _UpdateInspector(QThread):
+    """Interroge le manifeste de mise a jour hors du thread d'interface."""
+
+    checked = Signal(object, str)
+
+    def __init__(self, url: str, current: str, parent=None) -> None:
+        super().__init__(parent)
+        self._url = url
+        self._current = current
+
+    def run(self) -> None:
+        from ..updates import check
+
+        info, reason = check(self._url, self._current)
+        self.checked.emit(info, reason)
+
+
 class SettingsWindow(QDialog):
     """Boîte de dialogue de configuration."""
 
@@ -149,6 +165,8 @@ class SettingsWindow(QDialog):
         self._settings = settings
         self._catalogue = catalogue
         self._tester: _KeyTester | None = None
+        self._update_inspector: _UpdateInspector | None = None
+        self._update_info = None
         self._keys: dict[str, str] = {}
         self._active_provider: str = settings.provider
         self._capturing = False
@@ -174,6 +192,7 @@ class SettingsWindow(QDialog):
         self.tabs.addTab(self._scrollable(self._build_audio()), "Audio")
         self.tabs.addTab(self._scrollable(self._build_output()), "Sortie")
         self.tabs.addTab(self._scrollable(self._build_reword()), "Reformulation")
+        self.tabs.addTab(self._scrollable(self._build_updates()), "Mises à jour")
         layout.addWidget(self.tabs, 1)
 
         buttons = QDialogButtonBox()
@@ -205,7 +224,7 @@ class SettingsWindow(QDialog):
         api_box = QGroupBox("Fournisseur et clé API")
         api_form = QFormLayout(api_box)
 
-        self.provider_combo = QComboBox()
+        self.provider_combo = NoWheelComboBox()
         for name, provider in PROVIDERS.items():
             self.provider_combo.addItem(provider.label, name)
         api_form.addRow("Fournisseur", self.provider_combo)
@@ -234,15 +253,15 @@ class SettingsWindow(QDialog):
         self.key_status.setObjectName("hint")
         api_form.addRow("", self.key_status)
 
-        self.stt_combo = QComboBox()
+        self.stt_combo = NoWheelComboBox()
         self.stt_combo.setMinimumWidth(260)
         api_form.addRow("Modèle de transcription", self.stt_combo)
 
-        self.chat_combo = QComboBox()
+        self.chat_combo = NoWheelComboBox()
         self.chat_combo.setMinimumWidth(260)
         api_form.addRow("Modèle de reformulation", self.chat_combo)
 
-        self.language_combo = QComboBox()
+        self.language_combo = NoWheelComboBox()
         for code, name in LANGUAGES:
             self.language_combo.addItem(name, code)
         api_form.addRow("Langue", self.language_combo)
@@ -271,7 +290,7 @@ class SettingsWindow(QDialog):
         trigger_box = QGroupBox("Déclenchement")
         trigger_form = QFormLayout(trigger_box)
 
-        self.hotkey_combo = QComboBox()
+        self.hotkey_combo = NoWheelComboBox()
         for key, name in HOTKEY_CHOICES.items():
             self.hotkey_combo.addItem(name, key)
         self.hotkey_combo.currentIndexChanged.connect(self._sync_hotkey_state)
@@ -293,7 +312,7 @@ class SettingsWindow(QDialog):
         self.hotkey_hint.setWordWrap(True)
         trigger_form.addRow("", self.hotkey_hint)
 
-        self.hotkey_mode_combo = QComboBox()
+        self.hotkey_mode_combo = NoWheelComboBox()
         for key, name in HOTKEY_MODES:
             self.hotkey_mode_combo.addItem(name, key)
         trigger_form.addRow("Comportement", self.hotkey_mode_combo)
@@ -310,31 +329,6 @@ class SettingsWindow(QDialog):
 
         outer.addWidget(trigger_box)
 
-        # --- Mises a jour ---
-        update_box = QGroupBox("Mises à jour")
-        update_form = QFormLayout(update_box)
-
-        self.update_check = QCheckBox("Vérifier les mises à jour au démarrage")
-        update_form.addRow("", self.update_check)
-
-        self.manifest_edit = QLineEdit()
-        self.manifest_edit.setPlaceholderText(
-            "https://github.com/quentinvled/vox/releases/latest/download/version.json"
-        )
-        update_form.addRow("URL du manifeste", self.manifest_edit)
-
-        update_hint = QLabel(
-            "Vox lit un petit fichier JSON publié par tes soins et compare son "
-            "numéro de version au sien. S'il est plus récent, une entrée « Mise à "
-            "jour disponible » apparaît dans le menu. Vox ne télécharge ni "
-            "n'exécute jamais rien tout seul : il ouvre simplement la page dans "
-            "ton navigateur."
-        )
-        update_hint.setObjectName("hint")
-        update_hint.setWordWrap(True)
-
-        outer.addWidget(update_box)
-        outer.addWidget(update_hint)
         outer.addStretch(1)
         return page
 
@@ -347,7 +341,7 @@ class SettingsWindow(QDialog):
         device_box = QGroupBox("Microphone")
         device_form = QFormLayout(device_box)
 
-        self.device_combo = QComboBox()
+        self.device_combo = NoWheelComboBox()
         self.device_combo.setMinimumWidth(260)
         self.device_combo.addItem("Périphérique d'entrée par défaut", None)
         for device in list_input_devices():
@@ -364,7 +358,7 @@ class SettingsWindow(QDialog):
         limits_box = QGroupBox("Limites")
         limits_form = QFormLayout(limits_box)
 
-        self.max_seconds_spin = QSpinBox()
+        self.max_seconds_spin = NoWheelSpinBox()
         self.max_seconds_spin.setRange(10, 3600)
         self.max_seconds_spin.setSuffix(" s")
         limits_form.addRow("Durée maximale d'un enregistrement", self.max_seconds_spin)
@@ -376,7 +370,7 @@ class SettingsWindow(QDialog):
         limit_hint.setObjectName("hint")
         limit_hint.setWordWrap(True)
 
-        self.min_seconds_spin = QDoubleSpinBox()
+        self.min_seconds_spin = NoWheelDoubleSpinBox()
         self.min_seconds_spin.setRange(0.0, 5.0)
         self.min_seconds_spin.setSingleStep(0.1)
         self.min_seconds_spin.setDecimals(1)
@@ -389,12 +383,12 @@ class SettingsWindow(QDialog):
         ui_box = QGroupBox("Interface")
         ui_form = QFormLayout(ui_box)
 
-        self.theme_combo = QComboBox()
+        self.theme_combo = NoWheelComboBox()
         self.theme_combo.addItem("Sombre", "dark")
         self.theme_combo.addItem("Clair", "light")
         ui_form.addRow("Thème", self.theme_combo)
 
-        self.hide_delay_spin = QSpinBox()
+        self.hide_delay_spin = NoWheelSpinBox()
         self.hide_delay_spin.setRange(0, 120)
         self.hide_delay_spin.setSuffix(" s")
         self.hide_delay_spin.setSpecialValueText("jamais")
@@ -448,7 +442,7 @@ class SettingsWindow(QDialog):
         self.save_recordings_check.toggled.connect(self._sync_recording_state)
         rec_form.addRow("", self.save_recordings_check)
 
-        self.retention_spin = QSpinBox()
+        self.retention_spin = NoWheelSpinBox()
         self.retention_spin.setRange(0, 3650)
         self.retention_spin.setSuffix(" jours")
         self.retention_spin.setSpecialValueText("illimité")
@@ -501,12 +495,12 @@ class SettingsWindow(QDialog):
         box = QGroupBox("Insertion du texte")
         form = QFormLayout(box)
 
-        self.method_combo = QComboBox()
+        self.method_combo = NoWheelComboBox()
         for key, name in INJECT_METHODS:
             self.method_combo.addItem(name, key)
         form.addRow("Méthode", self.method_combo)
 
-        self.paste_combo = QComboBox()
+        self.paste_combo = NoWheelComboBox()
         self.paste_combo.setEditable(True)
         self.paste_combo.addItems(PASTE_KEYS)
         form.addRow("Raccourci de collage", self.paste_combo)
@@ -562,7 +556,7 @@ class SettingsWindow(QDialog):
         self.reword_check = QCheckBox("Reformuler automatiquement avant l'insertion")
         form.addRow("", self.reword_check)
 
-        self.tone_combo = QComboBox()
+        self.tone_combo = NoWheelComboBox()
         for tone_id, tone in TONES.items():
             self.tone_combo.addItem(f"{tone['label']} — {tone['hint']}", tone_id)
         form.addRow("Ton par défaut", self.tone_combo)
@@ -584,6 +578,62 @@ class SettingsWindow(QDialog):
 
         outer.addWidget(box)
         outer.addWidget(note)
+        outer.addStretch(1)
+        return page
+
+    def _build_updates(self) -> QWidget:
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(4, 12, 4, 4)
+
+        box = QGroupBox("Mises à jour")
+        form = QFormLayout(box)
+
+        self.version_label = QLabel(f"Vox {__version__}")
+        form.addRow("Version installée", self.version_label)
+
+        self.update_check = QCheckBox("Vérifier les mises à jour au démarrage")
+        form.addRow("", self.update_check)
+
+        self.manifest_edit = QLineEdit()
+        self.manifest_edit.setPlaceholderText(
+            "https://github.com/quentinvled/vox/releases/latest/download/version.json"
+        )
+        form.addRow("URL du manifeste", self.manifest_edit)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        self.update_now_button = QPushButton("Vérifier maintenant")
+        self.update_now_button.clicked.connect(self._check_updates_now)
+        actions.addWidget(self.update_now_button)
+        self.download_button = QPushButton("Télécharger la mise à jour")
+        self.download_button.setObjectName("primary")
+        self.download_button.setEnabled(False)
+        self.download_button.clicked.connect(self._open_download)
+        actions.addWidget(self.download_button)
+        actions.addStretch(1)
+        form.addRow("", actions)
+
+        self.update_status = QLabel("")
+        self.update_status.setObjectName("hint")
+        self.update_status.setWordWrap(True)
+        self.update_status.setText(
+            "Clique sur « Vérifier maintenant » pour comparer avec la dernière version publiée."
+        )
+        form.addRow("", self.update_status)
+
+        outer.addWidget(box)
+
+        hint = QLabel(
+            "Vox lit un petit fichier JSON publié par l'auteur et compare son "
+            "numéro de version au sien. S'il est plus récent, une entrée « Mise à "
+            "jour disponible » apparaît aussi dans le menu. Vox ne télécharge ni "
+            "n'exécute jamais rien tout seul : il ouvre simplement la page dans "
+            "ton navigateur."
+        )
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        outer.addWidget(hint)
         outer.addStretch(1)
         return page
 
@@ -720,6 +770,51 @@ class SettingsWindow(QDialog):
         self.key_status.setObjectName("success" if ok else "error")
         self.key_status.setText(("Clé valide — " + message) if ok else ("Échec : " + message))
         self._restyle(self.key_status)
+
+    # ------------------------------------------------------------------
+    # Mises a jour
+    # ------------------------------------------------------------------
+    def _set_update_status(self, text: str, level: str = "hint") -> None:
+        self.update_status.setObjectName(level)
+        self.update_status.setText(text)
+        self._restyle(self.update_status)
+
+    def _check_updates_now(self) -> None:
+        url = self.manifest_edit.text().strip()
+        if not url:
+            self._set_update_status("Renseigne d'abord l'URL du manifeste.", "error")
+            return
+        self.update_now_button.setEnabled(False)
+        self.download_button.setEnabled(False)
+        self._set_update_status("Vérification en cours…")
+        self._update_inspector = _UpdateInspector(url, __version__, self)
+        self._update_inspector.checked.connect(self._on_update_checked)
+        self._update_inspector.start()
+
+    def _on_update_checked(self, info, reason: str) -> None:
+        self.update_now_button.setEnabled(True)
+        self._update_info = info
+        if info is None:
+            self.download_button.setEnabled(False)
+            if reason.startswith("à jour"):
+                self._set_update_status(f"Vox {__version__} est à jour.", "success")
+            else:
+                self._set_update_status(f"Vérification impossible : {reason}", "error")
+            return
+        notes = (info.notes or "").strip()
+        message = f"Mise à jour disponible : Vox {info.version}."
+        if info.published_at:
+            message += f" (publiée le {info.published_at})"
+        if notes:
+            message += f"\n{notes}"
+        self._set_update_status(message, "success")
+        self.download_button.setEnabled(bool(info.url))
+
+    def _open_download(self) -> None:
+        info = self._update_info
+        url = (info.url if info else "") or self.manifest_edit.text().strip()
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
 
     @staticmethod
     def _restyle(widget: QWidget) -> None:

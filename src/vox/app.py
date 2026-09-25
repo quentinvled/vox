@@ -9,7 +9,7 @@ import time
 from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QSystemTrayIcon
 
 from . import __version__, injector, models, recordings, sounds, updates
 from . import config as config_module
@@ -17,6 +17,7 @@ from .autostart import set_autostart
 from .config import HOTKEY_CHOICES, Settings
 from .hotkey import EVENT_CANCEL, EVENT_START, EVENT_STOP, HotkeyManager
 from .models import Catalogue
+from .paths import data_dir
 from .pipeline import Pipeline
 from .reword import TONES
 from .ui.history_window import RecordingsWindow
@@ -294,13 +295,29 @@ class VoxApp(QObject):
                 self.settings.hotkey_mode,
             )
             self.tray.set_status("Prêt")
+            # Temoin : si aucun evenement clavier n'arrive, le hook est installe
+            # mais bloque par l'environnement (antivirus, pilote, droits).
+            QTimer.singleShot(20000, self._check_hotkey_alive)
             return
 
         log.warning("Raccourci global indisponible : %s", self.hotkey.error)
         self.tray.set_status("Raccourci indisponible")
+        self.overlay.set_state("error", "Raccourci global indisponible")
+        self.overlay.show_pill(12)
         QTimer.singleShot(
             1500,
             lambda: self._on_notice("error", self.hotkey.error or "Raccourci indisponible."),
+        )
+
+    def _check_hotkey_alive(self) -> None:
+        """Trace un avertissement si le hook est installe mais ne recoit rien."""
+        if self.hotkey.seen or self.hotkey.error:
+            return
+        log.warning(
+            "Aucun evenement clavier recu depuis le demarrage : le raccourci global "
+            "semble bloque (antivirus, logiciel clavier, droits, session). "
+            "Journal : %s",
+            data_dir() / "vox.log",
         )
 
     def _drain_hotkey(self) -> None:
@@ -448,8 +465,11 @@ class VoxApp(QObject):
             self._settings_window.activateWindow()
             return
         window = SettingsWindow(self.settings, self.catalogue, parent)
-        # Le bouton « Ouvrir les enregistrements » ferme d'abord les reglages,
-        # sinon l'historique s'afficherait derriere ce dialogue modal.
+        # Fenetre non modale : les reglages et la pilule doivent rester
+        # independants, sinon on ne peut plus fermer la pilule (ni interagir
+        # avec le menu) tant que les reglages sont ouverts.
+        window.setModal(False)
+        # Le bouton « Ouvrir les enregistrements » ferme d'abord les reglages.
         state = {"recordings": False}
 
         def _on_open_recordings() -> None:
@@ -457,13 +477,20 @@ class VoxApp(QObject):
             window.accept()
 
         window.open_recordings_requested.connect(_on_open_recordings)
+
+        def _on_finished(result: int) -> None:
+            self._settings_window = None
+            if result == QDialog.Accepted:
+                self._commit_settings(window.values())
+            if state["recordings"]:
+                state["recordings"] = False
+                self.open_recordings()
+
+        window.finished.connect(_on_finished)
         self._settings_window = window
-        accepted = window.exec()
-        self._settings_window = None
-        if accepted:
-            self._commit_settings(window.values())
-        if state["recordings"]:
-            self.open_recordings()
+        window.show()
+        window.raise_()
+        window.activateWindow()
 
     def check_updates(self) -> None:
         """Interroge le manifeste de version (silencieux en cas d'echec)."""

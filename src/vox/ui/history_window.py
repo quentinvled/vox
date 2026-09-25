@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSlider,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -29,6 +28,7 @@ from .. import recordings
 from ..config import Settings
 from ..recordings import Recording
 from ..stats import format_money
+from .wheel import NoWheelSlider
 from .widgets import IconButton
 
 # Au dela, la liste devient penible a parcourir : on n'affiche que le recent.
@@ -206,7 +206,7 @@ class RecordingsWindow(QWidget):
         self.play_button.clicked.connect(self._on_play)
         layout.addWidget(self.play_button)
 
-        self.position_slider = QSlider(Qt.Horizontal)
+        self.position_slider = NoWheelSlider(Qt.Horizontal)
         self.position_slider.setRange(0, 0)
         self.position_slider.sliderPressed.connect(self._on_seek_start)
         self.position_slider.sliderReleased.connect(self._on_seek_end)
