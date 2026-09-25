@@ -69,10 +69,12 @@ def _pynput_name(key) -> str:
 class _WindowsPoller:
     """Surveille l'etat des modificateurs sans hook clavier.
 
-    `GetAsyncKeyState` ne demande ni privilegie, ni hook : un antivirus ne peut
-    pas le bloquer. C'est le repli fiable quand `keyboard` est musele. La
-    scrutation se met en veille des que le hook fournit des evenements, et ne
-    prend le relais que si celui-ci reste silencieux.
+    `GetAsyncKeyState` ne demande ni privilege, ni hook : un antivirus ne peut
+    pas le bloquer. La scrutation tourne en permanence, en parallele du hook :
+    l'union des deux sources est plus fiable que l'une ou l'autre (sur certaines
+    machines le hook voit Ctrl mais pas la touche Windows, par exemple). Les
+    evenements en double sont sans effet, les transitions etant dedoublonnees
+    par la machine a etats.
     """
 
     INTERVAL = 0.02
@@ -120,18 +122,24 @@ class _WindowsPoller:
             time.sleep(self.INTERVAL)
 
     def tick(self) -> None:
-        """Une passe de scrutation (separee pour etre testable)."""
-        if self._manager.hook_events != 0 or self._manager.error:
+        """Une passe de scrutation (separee pour etre testable).
+
+        Tourne en permanence, meme quand le hook fonctionne : sur certaines
+        machines le hook voit Ctrl mais pas la touche Windows. Les transitions
+        en double sont sans effet.
+        """
+        if self._manager.error:
             return
-        if not self._warned:
-            self._warned = True
-            log.info("Hook clavier silencieux : scrutation d'etat active.")
         for vk, name in self._MODIFIERS:
             down = self._down(vk)
             changed = down != self._previous[vk]
             self._previous[vk] = down
-            if changed and self._manager.hook_events == 0:
-                self._manager._handle(name, down)
+            if not changed:
+                continue
+            if not self._warned and self._manager.hook_events == 0:
+                self._warned = True
+                log.info("Hook clavier silencieux : la scrutation prend le relais.")
+            self._manager._handle(name, down)
         if self._manager.combo_held and self._any_other_key_down():
             self._manager._mark_tainted()
 
@@ -175,6 +183,9 @@ class HotkeyManager:
         # Nombre d'evenements clavier reellement traites : sert de temoin pour
         # verifier que le raccourci fonctionne (0 = bloque par l'environnement).
         self.seen = 0
+        # Noms de touches deja vus : journalises une fois, pour diagnostiquer
+        # une touche qui n'arrive jamais (touche Windows verrouillee, etc.).
+        self._names_seen: set[str] = set()
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -346,12 +357,10 @@ class HotkeyManager:
         if lowered in _IGNORED:
             return
         self.seen += 1
-        if self.seen == 1:
-            log.info(
-                "Premier evenement clavier recu : %s (%s)",
-                lowered,
-                "appui" if is_down else "relachement",
-            )
+        if lowered not in self._names_seen:
+            self._names_seen.add(lowered)
+            if len(self._names_seen) <= 40:
+                log.info("Touche clavier detectee : %s", lowered)
         group = self._group_of(lowered)
 
         with self._lock:

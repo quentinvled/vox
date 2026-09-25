@@ -17,7 +17,6 @@ from .autostart import set_autostart
 from .config import HOTKEY_CHOICES, Settings
 from .hotkey import EVENT_CANCEL, EVENT_START, EVENT_STOP, HotkeyManager
 from .models import Catalogue
-from .paths import data_dir
 from .pipeline import Pipeline
 from .reword import TONES
 from .ui.history_window import RecordingsWindow
@@ -295,9 +294,6 @@ class VoxApp(QObject):
                 self.settings.hotkey_mode,
             )
             self.tray.set_status("Prêt")
-            # Temoin : si aucun evenement clavier n'arrive, le hook est installe
-            # mais bloque par l'environnement (antivirus, pilote, droits).
-            QTimer.singleShot(20000, self._check_hotkey_alive)
             return
 
         log.warning("Raccourci global indisponible : %s", self.hotkey.error)
@@ -307,17 +303,6 @@ class VoxApp(QObject):
         QTimer.singleShot(
             1500,
             lambda: self._on_notice("error", self.hotkey.error or "Raccourci indisponible."),
-        )
-
-    def _check_hotkey_alive(self) -> None:
-        """Trace un avertissement si le hook est installe mais ne recoit rien."""
-        if self.hotkey.seen or self.hotkey.error:
-            return
-        log.warning(
-            "Aucun evenement clavier recu depuis le demarrage : le raccourci global "
-            "semble bloque (antivirus, logiciel clavier, droits, session). "
-            "Journal : %s",
-            data_dir() / "vox.log",
         )
 
     def _drain_hotkey(self) -> None:
