@@ -1,5 +1,8 @@
 # Vox
 
+[![Release](https://github.com/quentinvled/vox/actions/workflows/release.yml/badge.svg)](https://github.com/quentinvled/vox/actions/workflows/release.yml)
+[![Dernière version](https://img.shields.io/github/v/release/quentinvled/vox)](https://github.com/quentinvled/vox/releases/latest)
+
 Dictée vocale globale : maintiens **Ctrl + Maj**, parle, relâche — le texte
 s'écrit tout seul dans la fenêtre active. Disponible sur **Windows** et
 **Linux**.
