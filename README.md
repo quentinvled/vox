@@ -34,10 +34,20 @@ Ouvre la page des versions :
 
    (Double-clic possible aussi, selon ton bureau.)
 
+Si le lancement échoue avec un message sur `libfuse.so.2` (Ubuntu 24.04 et
+suivants ne l'installent plus par défaut), deux solutions :
+
+```bash
+sudo apt install libfuse2t64          # ou libfuse2 selon la distribution
+# ... ou sans rien installer :
+./Vox-*-x86_64.AppImage --appimage-extract-and-run
+```
+
 Cibles : **X11**. Sous Wayland, le raccourci global et le collage automatique
-sont restreints par le compositeur ; en cas de souci, passe la méthode
-d'insertion sur **Frappe** dans les réglages. Sur GNOME, l'icône de la barre
-système nécessite l'extension *AppIndicator*.
+sont restreints par le compositeur (Wayland interdit à une application
+d'injecter des touches dans une autre) ; en cas de souci, passe la méthode
+d'insertion sur **Frappe** dans les réglages, ou ouvre une session X11. Sur
+GNOME, l'icône de la barre système nécessite l'extension *AppIndicator*.
 
 Selon la distribution, quelques bibliothèques système peuvent manquer
 (typiquement `libxcb-cursor0`, `libxkbcommon-x11-0`, `libgl1`, `libportaudio2`).
