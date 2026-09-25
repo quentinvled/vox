@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -12,12 +13,14 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -25,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..api import PROVIDERS, Client
-from ..config import HOTKEY_CHOICES, Settings
+from ..config import HOTKEY_CHOICES, HOTKEY_MODIFIERS, Settings
 from ..models import Catalogue
 from ..models import label as model_label
 from ..recorder import list_input_devices
@@ -53,6 +56,45 @@ LANGUAGES: list[tuple[str, str]] = [
 ]
 
 PASTE_KEYS = ["ctrl+v", "ctrl+shift+v", "ctrl+alt+v", "shift+insert"]
+
+# Correspondance touche Qt -> nom interne, pour la capture d'un raccourci.
+_QT_MODIFIERS: tuple[tuple[Qt.KeyboardModifier, str], ...] = (
+    (Qt.ControlModifier, "ctrl"),
+    (Qt.ShiftModifier, "shift"),
+    (Qt.AltModifier, "alt"),
+    (Qt.MetaModifier, "win"),
+)
+_QT_MODIFIER_KEYS: dict[int, str] = {
+    int(Qt.Key_Control): "ctrl",
+    int(Qt.Key_Shift): "shift",
+    int(Qt.Key_Alt): "alt",
+    int(Qt.Key_Meta): "win",
+}
+# Ordre d'affichage conventionnel : Ctrl + Alt + Maj.
+_MODIFIER_ORDER = ("ctrl", "alt", "shift", "win")
+
+
+def combo_from_event(event: QKeyEvent) -> str | None:
+    """Traduit un appui clavier en combinaison de modificateurs.
+
+    Renvoie None tant que moins de deux modificateurs sont enfonces : un
+    raccourci a un seul modificateur serait ingerable au quotidien.
+    """
+    pressed = {name for flag, name in _QT_MODIFIERS if event.modifiers() & flag}
+    own = _QT_MODIFIER_KEYS.get(int(event.key()))
+    if own:
+        # Qt n'inclut pas toujours la touche modificateur elle-meme dans
+        # modifiers() : on l'ajoute explicitement.
+        pressed.add(own)
+    if len(pressed) < 2:
+        return None
+    return "+".join(name for name in _MODIFIER_ORDER if name in pressed)
+
+
+def describe_combo(combo: str) -> str:
+    """« ctrl+alt » -> « Ctrl + Alt »."""
+    parts = [HOTKEY_MODIFIERS.get(part, part) for part in combo.split("+") if part]
+    return " + ".join(parts) or combo
 
 INJECT_METHODS = [
     ("paste", "Presse-papier (rapide, recommandé)"),
@@ -105,6 +147,9 @@ class SettingsWindow(QDialog):
         self._tester: _KeyTester | None = None
         self._keys: dict[str, str] = {}
         self._active_provider: str = settings.provider
+        self._capturing = False
+        self._captured = False
+        self.custom_hotkey = ""
 
         self._build()
         self._load(settings)
@@ -121,10 +166,10 @@ class SettingsWindow(QDialog):
         layout.addWidget(title)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_general(), "Général")
-        self.tabs.addTab(self._build_audio(), "Audio")
-        self.tabs.addTab(self._build_output(), "Sortie")
-        self.tabs.addTab(self._build_reword(), "Reformulation")
+        self.tabs.addTab(self._scrollable(self._build_general()), "Général")
+        self.tabs.addTab(self._scrollable(self._build_audio()), "Audio")
+        self.tabs.addTab(self._scrollable(self._build_output()), "Sortie")
+        self.tabs.addTab(self._scrollable(self._build_reword()), "Reformulation")
         layout.addWidget(self.tabs, 1)
 
         buttons = QDialogButtonBox()
@@ -138,6 +183,15 @@ class SettingsWindow(QDialog):
         layout.addWidget(buttons)
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _scrollable(page: QWidget) -> QScrollArea:
+        """Rend un onglet defilable : le contenu depasse sur les petits ecrans."""
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.NoFrame)
+        area.setWidget(page)
+        return area
+
     def _build_general(self) -> QWidget:
         page = QWidget()
         outer = QVBoxLayout(page)
@@ -157,7 +211,7 @@ class SettingsWindow(QDialog):
         self.key_edit = QLineEdit()
         self.key_edit.setEchoMode(QLineEdit.Password)
         self.key_edit.setPlaceholderText("sk-or-v1-…")
-        self.key_edit.setMinimumWidth(320)
+        self.key_edit.setMinimumWidth(240)
         key_row.addWidget(self.key_edit, 1)
         self.reveal_button = QPushButton("Afficher")
         self.reveal_button.setCheckable(True)
@@ -177,11 +231,11 @@ class SettingsWindow(QDialog):
         api_form.addRow("", self.key_status)
 
         self.stt_combo = QComboBox()
-        self.stt_combo.setMinimumWidth(360)
+        self.stt_combo.setMinimumWidth(260)
         api_form.addRow("Modèle de transcription", self.stt_combo)
 
         self.chat_combo = QComboBox()
-        self.chat_combo.setMinimumWidth(360)
+        self.chat_combo.setMinimumWidth(260)
         api_form.addRow("Modèle de reformulation", self.chat_combo)
 
         self.language_combo = QComboBox()
@@ -216,7 +270,24 @@ class SettingsWindow(QDialog):
         self.hotkey_combo = QComboBox()
         for key, name in HOTKEY_CHOICES.items():
             self.hotkey_combo.addItem(name, key)
-        trigger_form.addRow("Raccourci", self.hotkey_combo)
+        self.hotkey_combo.currentIndexChanged.connect(self._sync_hotkey_state)
+
+        hotkey_row = QHBoxLayout()
+        hotkey_row.setSpacing(6)
+        hotkey_row.addWidget(self.hotkey_combo, 1)
+        self.capture_button = QPushButton("Enregistrer…")
+        self.capture_button.setToolTip(
+            "Clique puis appuie sur ta combinaison (au moins deux modificateurs "
+            "parmi Ctrl, Maj, Alt, Windows). Échap pour annuler."
+        )
+        self.capture_button.clicked.connect(self._start_capture)
+        hotkey_row.addWidget(self.capture_button)
+        trigger_form.addRow("Raccourci", hotkey_row)
+
+        self.hotkey_hint = QLabel("")
+        self.hotkey_hint.setObjectName("hint")
+        self.hotkey_hint.setWordWrap(True)
+        trigger_form.addRow("", self.hotkey_hint)
 
         self.hotkey_mode_combo = QComboBox()
         for key, name in HOTKEY_MODES:
@@ -271,7 +342,7 @@ class SettingsWindow(QDialog):
         device_form = QFormLayout(device_box)
 
         self.device_combo = QComboBox()
-        self.device_combo.setMinimumWidth(380)
+        self.device_combo.setMinimumWidth(260)
         self.device_combo.addItem("Périphérique par défaut de Windows", None)
         for device in list_input_devices():
             self.device_combo.addItem(
@@ -316,6 +387,16 @@ class SettingsWindow(QDialog):
         self.theme_combo.addItem("Sombre", "dark")
         self.theme_combo.addItem("Clair", "light")
         ui_form.addRow("Thème", self.theme_combo)
+
+        self.hide_delay_spin = QSpinBox()
+        self.hide_delay_spin.setRange(0, 120)
+        self.hide_delay_spin.setSuffix(" s")
+        self.hide_delay_spin.setSpecialValueText("jamais")
+        self.hide_delay_spin.setToolTip(
+            "Délai avant que la pilule se masque toute seule. 0 = elle reste "
+            "affichée jusqu'à ce que tu la fermes avec le ✕."
+        )
+        ui_form.addRow("Masquer la pilule après", self.hide_delay_spin)
 
         self.sounds_check = QCheckBox("Signaux sonores")
         ui_form.addRow("", self.sounds_check)
@@ -444,6 +525,7 @@ class SettingsWindow(QDialog):
         self.reload_button.clicked.connect(self._reload_devices)
         self.reword_check.toggled.connect(self._sync_reword_state)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        self._sync_hotkey_state()
 
     def _on_provider_changed(self, index: int) -> None:
         provider = self.provider_combo.itemData(index)
@@ -463,6 +545,53 @@ class SettingsWindow(QDialog):
             f'<a href="{info.console_url}" style="color:inherit;text-decoration:none">'
             f"Obtenir une cle → {info.console_url}</a>"
         )
+
+    def _sync_hotkey_state(self) -> None:
+        custom = self.hotkey_combo.currentData() == "custom"
+        self.capture_button.setEnabled(custom)
+        if custom:
+            self.capture_button.setText(
+                f"{describe_combo(self.custom_hotkey)} — modifier"
+                if self.custom_hotkey
+                else "Enregistrer…"
+            )
+            self.hotkey_hint.setText(
+                "Clique sur « Enregistrer », puis appuie sur ta combinaison "
+                "(au moins deux modificateurs). Échap pour annuler."
+            )
+        else:
+            self.capture_button.setText("Enregistrer…")
+            self.hotkey_hint.setText(
+                "Le raccourci fonctionne en maintenant la combinaison : maintenir "
+                "pour parler, relâcher pour insérer."
+            )
+
+    def _start_capture(self) -> None:
+        self._capturing = True
+        self._captured = False
+        self.capture_button.setEnabled(False)
+        self.capture_button.setText("Appuie maintenant…")
+        self.setFocus()
+
+    def _stop_capture(self) -> None:
+        self._capturing = False
+        self.capture_button.setEnabled(True)
+        self._sync_hotkey_state()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if not self._capturing:
+            super().keyPressEvent(event)
+            return
+        if event.key() == Qt.Key_Escape:
+            self._stop_capture()
+            event.accept()
+            return
+        combo = combo_from_event(event)
+        if combo:
+            self.custom_hotkey = combo
+            self._captured = True
+            self._stop_capture()
+        event.accept()
 
     def _toggle_key_visibility(self, visible: bool) -> None:
         self.key_edit.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
@@ -522,8 +651,16 @@ class SettingsWindow(QDialog):
         self._select_data(self.language_combo, settings.language)
         self.vocabulary_edit.setPlainText(settings.vocabulary_prompt)
 
-        self._select_data(self.hotkey_combo, settings.hotkey)
         self._select_data(self.hotkey_mode_combo, settings.hotkey_mode)
+        # Une combinaison personnalisee n'est pas dans la liste deroulante :
+        # on selectionne « Personnalisé » et on garde la valeur a part.
+        if settings.hotkey and settings.hotkey not in HOTKEY_CHOICES:
+            self._select_data(self.hotkey_combo, "custom")
+            self.custom_hotkey = settings.hotkey
+        else:
+            self._select_data(self.hotkey_combo, settings.hotkey or "ctrl+shift")
+            self.custom_hotkey = settings.hotkey or "ctrl+shift"
+        self._sync_hotkey_state()
         self.enter_check.setChecked(settings.double_tap_enter)
         self.autostart_check.setChecked(settings.autostart)
         self.update_check.setChecked(settings.check_updates)
@@ -534,6 +671,7 @@ class SettingsWindow(QDialog):
         self.max_seconds_spin.setValue(settings.max_record_seconds)
         self.min_seconds_spin.setValue(settings.min_record_seconds)
         self._select_data(self.theme_combo, settings.theme)
+        self.hide_delay_spin.setValue(settings.overlay_hide_delay)
         self.sounds_check.setChecked(settings.sounds)
         self.overlay_result_check.setChecked(settings.show_overlay_on_result)
         self.history_check.setChecked(settings.history_enabled)
@@ -551,6 +689,13 @@ class SettingsWindow(QDialog):
         self._select_data(self.tone_combo, settings.reword_tone)
         self.custom_prompt_edit.setPlainText(settings.reword_custom_prompt)
         self._sync_reword_state()
+
+    def _selected_hotkey(self) -> str:
+        """Combinaison retenue, en tenant compte du mode personnalise."""
+        data = self.hotkey_combo.currentData()
+        if data == "custom":
+            return self.custom_hotkey or "ctrl+shift"
+        return data or "ctrl+shift"
 
     @staticmethod
     def _fill(combo: QComboBox, items: list[dict], current: str) -> None:
@@ -586,7 +731,7 @@ class SettingsWindow(QDialog):
             chat_model=self.chat_combo.currentData() or self._settings.chat_model,
             language=self.language_combo.currentData() or "",
             vocabulary_prompt=self.vocabulary_edit.toPlainText().strip(),
-            hotkey=self.hotkey_combo.currentData(),
+            hotkey=self._selected_hotkey(),
             hotkey_mode=self.hotkey_mode_combo.currentData(),
             double_tap_enter=self.enter_check.isChecked(),
             autostart=self.autostart_check.isChecked(),
@@ -596,6 +741,7 @@ class SettingsWindow(QDialog):
             max_record_seconds=self.max_seconds_spin.value(),
             min_record_seconds=self.min_seconds_spin.value(),
             theme=self.theme_combo.currentData(),
+            overlay_hide_delay=self.hide_delay_spin.value(),
             sounds=self.sounds_check.isChecked(),
             show_overlay_on_result=self.overlay_result_check.isChecked(),
             history_enabled=self.history_check.isChecked(),

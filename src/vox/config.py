@@ -40,12 +40,22 @@ KEY_FIELDS: dict[str, str] = {
     "openai": "openai_api_key",
 }
 
-# Raccourcis proposes dans l'UI -> (ctrl, shift, alt, win)
+# Raccourcis proposés dans l'UI -> (ctrl, shift, alt, win)
 HOTKEY_CHOICES: dict[str, str] = {
     "ctrl+shift": "Ctrl + Maj",
     "ctrl+alt": "Ctrl + Alt",
     "ctrl+win": "Ctrl + Windows",
     "alt+shift": "Alt + Maj",
+    "ctrl+alt+shift": "Ctrl + Alt + Maj",
+    "custom": "Personnalisé (enregistrer une combinaison)",
+}
+
+# Modificateurs acceptés dans une combinaison personnalisée.
+HOTKEY_MODIFIERS: dict[str, str] = {
+    "ctrl": "Ctrl",
+    "shift": "Maj",
+    "alt": "Alt",
+    "win": "Windows",
 }
 
 
@@ -91,6 +101,8 @@ class Settings:
     # --- Interface ---
     theme: str = "dark"
     overlay_position: list[int] | None = None
+    # 0 = la pilule ne se masque jamais toute seule.
+    overlay_hide_delay: int = 0
     sounds: bool = True
     history_enabled: bool = True
     autostart: bool = False

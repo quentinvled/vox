@@ -67,7 +67,7 @@ class Overlay(QWidget):
         self._state = "idle"
         self._tone = "clean"
         self._drag_offset: QPoint | None = None
-        self._pinned = False
+        self._hide_delay = 0
         self._taskbar_visible = False
         self._full_text = ""
 
@@ -77,6 +77,10 @@ class Overlay(QWidget):
         self._hide_timer.timeout.connect(self._auto_hide)
 
         self._menu = QMenu(self)
+
+    def set_hide_delay(self, seconds: int) -> None:
+        """Delai avant masquage automatique. 0 = ne se masque jamais."""
+        self._hide_delay = max(0, int(seconds))
 
     # ------------------------------------------------------------------
     def _build(self) -> None:
@@ -241,13 +245,19 @@ class Overlay(QWidget):
             self.bars.push(value)
 
     # ------------------------------------------------------------------
-    def show_pill(self, seconds: int = 0) -> None:
-        self._pinned = False
+    def show_pill(self, delay: int | None = None) -> None:
+        """Affiche la pilule.
+
+        `delay=None` applique le reglage de l'utilisateur, `delay=0` force
+        l'affichage permanent, toute autre valeur impose un delai ponctuel.
+        """
+        self._hide_timer.stop()
         self._reposition_if_needed()
         self.show()
         self.raise_()
-        if seconds:
-            self._hide_timer.start(seconds * 1000)
+        effective = self._hide_delay if delay is None else delay
+        if effective > 0:
+            self._hide_timer.start(effective * 1000)
 
     def hide_pill(self) -> None:
         # En mode barre des taches, masquer la pilule ferait disparaitre le
@@ -257,9 +267,9 @@ class Overlay(QWidget):
         self._hide_timer.stop()
         self.hide()
 
-    def pin(self, seconds: int = 0) -> None:
-        self._pinned = True
-        self.show_pill(seconds)
+    def pin(self) -> None:
+        """Affiche sans jamais masquer automatiquement."""
+        self.show_pill(0)
 
     # ------------------------------------------------------------------
     # Interactions
@@ -275,9 +285,7 @@ class Overlay(QWidget):
         self._menu.exec(self.model_chip.mapToGlobal(QPoint(0, self.model_chip.height())))
 
     def _auto_hide(self) -> None:
-        if self._taskbar_visible:
-            return
-        if self._pinned or self._state in {"recording", "transcribing", "rewording"}:
+        if self._state in {"recording", "transcribing", "rewording"}:
             return
         self.hide()
 

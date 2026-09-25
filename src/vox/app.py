@@ -108,7 +108,7 @@ class VoxApp(QObject):
 
     def _wire(self) -> None:
         self.tray.toggle_requested.connect(self.pipeline.toggle)
-        self.tray.show_requested.connect(lambda: self.overlay.pin(4))
+        self.tray.show_requested.connect(self.overlay.show_pill)
         self.tray.reinsert_requested.connect(self.pipeline.reinsert_last)
         self.tray.copy_requested.connect(self.pipeline.copy_last)
         self.tray.settings_requested.connect(self.open_settings)
@@ -154,11 +154,12 @@ class VoxApp(QObject):
 
     def start(self) -> None:
         self.overlay.restore_position(self.settings.overlay_position)
+        self.overlay.set_hide_delay(self.settings.overlay_hide_delay)
         self.overlay.set_state("idle", detail=f"{self.hotkey_label} pour dicter")
         if self.settings.show_in_taskbar:
             # Doit preceder tout hide_pill(), qui est ignore dans ce mode.
             self.overlay.set_taskbar_visible(True)
-            self.overlay.pin()
+            self.overlay.show_pill()
         else:
             self.overlay.hide_pill()
         sounds.dump_wavs()
@@ -228,7 +229,7 @@ class VoxApp(QObject):
         self.tray.set_show_in_taskbar(enabled)
         self.overlay.set_taskbar_visible(enabled)
         if enabled:
-            self.overlay.pin()
+            self.overlay.show_pill()
             self._on_notice("info", "Pilule gardée dans la barre des tâches.")
         else:
             self.overlay.set_state("idle", detail=f"{self.hotkey_label} pour dicter")
@@ -310,7 +311,7 @@ class VoxApp(QObject):
     def _on_recording_changed(self, recording: bool) -> None:
         if recording:
             self._recording_started_at = time.monotonic()
-            self.overlay.pin()
+            self.overlay.show_pill()
             self.overlay.set_state("recording", detail=f"{self.hotkey_label} pour arreter")
             self.tray.set_status("Enregistrement…")
             self._level_timer.start()
@@ -328,36 +329,36 @@ class VoxApp(QObject):
         elif state == "idle":
             self.overlay.set_state("idle", detail=f"{self.hotkey_label} pour dicter")
             self.tray.set_status("Pret")
-            self.overlay.pin(2)
+            self.overlay.show_pill()
         elif state == "transcribing":
-            self.overlay.pin()
+            self.overlay.show_pill()
             self.overlay.set_state("transcribing", detail="Patientez…")
             self.tray.set_status("Transcription…")
         elif state == "rewording":
-            self.overlay.pin()
+            self.overlay.show_pill()
             self.overlay.set_state("rewording", detail="Patientez…")
             self.tray.set_status("Reformulation…")
         elif state == "done":
             self.tray.set_status("Prêt")
             if self.settings.show_overlay_on_result:
-                self.overlay.pin(4)
+                self.overlay.show_pill()
             else:
                 self.overlay.hide_pill()
         elif state == "error":
-            self.overlay.pin(7)
+            self.overlay.show_pill()
             self.tray.set_status("Erreur")
 
     def _on_notice(self, level: str, message: str) -> None:
         if level == "error":
             self.overlay.set_state("error", message)
-            self.overlay.pin(7)
+            self.overlay.show_pill()
             if self.tray.isSystemTrayAvailable():
                 self.tray.showMessage("Vox", message, QSystemTrayIcon.Warning, 6000)
         else:
             if not self.settings.show_overlay_on_result:
                 return
             self.overlay.set_state("done", message)
-            self.overlay.pin(3)
+            self.overlay.show_pill()
 
     def _on_transcript(self, text: str, _meta: dict) -> None:
         self.overlay.set_state("transcribing", detail=text[:70] + ("…" if len(text) > 70 else ""))
@@ -476,6 +477,7 @@ class VoxApp(QObject):
 
         config_module.save(settings)
         self.pipeline.apply_settings(settings)
+        self.overlay.set_hide_delay(settings.overlay_hide_delay)
 
         if (previous.theme, previous.hotkey, previous.hotkey_mode) != (
             settings.theme,
