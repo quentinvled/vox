@@ -176,8 +176,21 @@ class SetupApp:
             with contextlib.suppress(tk.TclError):
                 self.root.iconbitmap(default=str(icon))
 
-        self._center(560, 360)
         self._build()
+        self._autosize()
+
+    def _autosize(self) -> None:
+        """Dimensionne la fenetre sur son contenu.
+
+        Indispensable : avec la mise a l'echelle Windows (125 %, 150 %), les
+        polices grandissent et une hauteur fixe rognait le bas de la fenetre —
+        le bouton « Installer » devenait inaccessible.
+        """
+        self.root.update_idletasks()
+        width = max(560, self.root.winfo_reqwidth())
+        height = max(360, self.root.winfo_reqheight())
+        self._center(width, height)
+        self.root.minsize(width, height)
 
     def _center(self, width: int, height: int) -> None:
         self.root.update_idletasks()
@@ -188,12 +201,43 @@ class SetupApp:
     def _build(self) -> None:
         pad = {"padx": 28}
 
+        # Les boutons sont reserves en premier : quoi qu'il arrive, « Installer »
+        # reste visible, meme si la mise a l'echelle de l'ecran agrandit le texte.
+        buttons = tk.Frame(self.root, bg=BG)
+        buttons.pack(side="bottom", fill="x", pady=22, **pad)
+
+        self.quit_button = tk.Button(
+            buttons, text="Quitter", command=self.root.destroy,
+            bg=CARD, fg=TEXT, activebackground="#2a2e37", activeforeground=TEXT,
+            font=("Segoe UI", 10), relief="flat", bd=0, padx=18, pady=7, cursor="hand2",
+        )
+        self.quit_button.pack(side="right")
+
+        self.install_button = tk.Button(
+            buttons, text="Installer", command=self.start,
+            bg=ACCENT, fg="#ffffff", activebackground="#8fb8ff", activeforeground="#ffffff",
+            font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=22, pady=7, cursor="hand2",
+        )
+        self.install_button.pack(side="right", padx=(0, 10))
+
+        self.launch_var = tk.BooleanVar(value=True)
+        self.launch_check = tk.Checkbutton(
+            buttons, text="Lancer Vox à la fin", variable=self.launch_var,
+            bg=BG, fg=MUTED, selectcolor=CARD, activebackground=BG,
+            activeforeground=TEXT, font=("Segoe UI", 9), bd=0, highlightthickness=0,
+        )
+        self.launch_check.pack(side="left")
+
         header = tk.Frame(self.root, bg=BG)
         header.pack(fill="x", pady=(24, 4), **pad)
 
         if png := asset("Vox.png"):
             with contextlib.suppress(tk.TclError):
-                self._logo = tk.PhotoImage(file=str(png))
+                logo = tk.PhotoImage(file=str(png))
+                # Le PNG fait 256x256 : trop haut pour l'en-tete, on le reduit
+                # de moitie (sous-echantillonnage entier, seule operation offerte
+                # par tkinter sans dependance supplementaire).
+                self._logo = logo.subsample(2)
                 tk.Label(header, image=self._logo, bg=BG).pack(side="left", padx=(0, 14))
 
         titles = tk.Frame(header, bg=BG)
@@ -246,31 +290,6 @@ class SetupApp:
             anchor="w", wraplength=500, justify="left",
         )
         self.detail.pack(fill="x", pady=(10, 0), **pad)
-
-        buttons = tk.Frame(self.root, bg=BG)
-        buttons.pack(side="bottom", fill="x", pady=22, **pad)
-
-        self.quit_button = tk.Button(
-            buttons, text="Quitter", command=self.root.destroy,
-            bg=CARD, fg=TEXT, activebackground="#2a2e37", activeforeground=TEXT,
-            font=("Segoe UI", 10), relief="flat", bd=0, padx=18, pady=7, cursor="hand2",
-        )
-        self.quit_button.pack(side="right")
-
-        self.install_button = tk.Button(
-            buttons, text="Installer", command=self.start,
-            bg=ACCENT, fg="#ffffff", activebackground="#8fb8ff", activeforeground="#ffffff",
-            font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=22, pady=7, cursor="hand2",
-        )
-        self.install_button.pack(side="right", padx=(0, 10))
-
-        self.launch_var = tk.BooleanVar(value=True)
-        self.launch_check = tk.Checkbutton(
-            buttons, text="Lancer Vox à la fin", variable=self.launch_var,
-            bg=BG, fg=MUTED, selectcolor=CARD, activebackground=BG,
-            activeforeground=TEXT, font=("Segoe UI", 9), bd=0, highlightthickness=0,
-        )
-        self.launch_check.pack(side="left")
 
         self.root.bind("<Return>", lambda _e: self.start())
         self.root.bind("<Escape>", lambda _e: self.root.destroy())
