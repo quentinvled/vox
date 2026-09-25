@@ -47,6 +47,7 @@ class RecordingsWindow(QWidget):
     insert_requested = Signal(str)
     retranscribe_requested = Signal(str)
     delete_requested = Signal(str)
+    settings_requested = Signal()
 
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -97,6 +98,10 @@ class RecordingsWindow(QWidget):
         self.folder_button.setToolTip("Ouvrir le dossier des enregistrements dans l'explorateur")
         self.folder_button.clicked.connect(self._open_folder)
         header.addWidget(self.folder_button)
+        self.settings_button = QPushButton("Réglages")
+        self.settings_button.setToolTip("Ouvrir les réglages de Vox")
+        self.settings_button.clicked.connect(self.settings_requested.emit)
+        header.addWidget(self.settings_button)
         outer.addLayout(header)
 
         splitter = QSplitter(Qt.Horizontal)

@@ -442,12 +442,12 @@ class VoxApp(QObject):
         self.settings.overlay_position = [x, y]
         config_module.save(self.settings)
 
-    def open_settings(self) -> None:
+    def open_settings(self, parent=None) -> None:
         if self._settings_window is not None:
             self._settings_window.raise_()
             self._settings_window.activateWindow()
             return
-        window = SettingsWindow(self.settings, self.catalogue)
+        window = SettingsWindow(self.settings, self.catalogue, parent)
         # Le bouton « Ouvrir les enregistrements » ferme d'abord les reglages,
         # sinon l'historique s'afficherait derriere ce dialogue modal.
         state = {"recordings": False}
@@ -520,6 +520,11 @@ class VoxApp(QObject):
             window.insert_requested.connect(self.pipeline.insert_text)
             window.retranscribe_requested.connect(self.pipeline.retranscribe)
             window.delete_requested.connect(self._delete_recording)
+            # Retour vers les reglages depuis l'historique : le dialogue prend
+            # la fenetre d'historique comme parent, pour s'ouvrir par-dessus.
+            window.settings_requested.connect(
+                lambda: self.open_settings(parent=self._recordings_window)
+            )
             self._recordings_window = window
         self._recordings_window.apply_theme(self.settings.theme)
         self._recordings_window.refresh()
