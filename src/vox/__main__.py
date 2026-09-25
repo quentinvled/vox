@@ -48,9 +48,10 @@ def main() -> int:
 
 def main_gui() -> int:
     """Lance l'interface graphique."""
+    from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
 
-    from .app import VoxApp, acquire_single_instance
+    from .app import VoxApp, acquire_single_instance, handle_second_instance
     from .ui.widgets import make_app_icon
 
     _configure_logging()
@@ -61,6 +62,13 @@ def main_gui() -> int:
         platform.machine(),
     )
 
+    # `--recordings` est le raccourci « Mes enregistrements » : il ouvre
+    # directement l'historique audio. On le retire avant QApplication, qui
+    # n'aime pas les arguments qu'il ne connait pas.
+    wants_recordings = "--recordings" in sys.argv
+    while "--recordings" in sys.argv:
+        sys.argv.remove("--recordings")
+
     app = QApplication(sys.argv)
     app.setApplicationName("Vox")
     app.setApplicationDisplayName("Vox")
@@ -68,14 +76,21 @@ def main_gui() -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(make_app_icon())
 
-    server = acquire_single_instance(app)
+    server = acquire_single_instance(
+        app, "recordings" if wants_recordings else "show"
+    )
     if server is None:
         log.info("Instance deja active : sortie.")
         return 0
 
     vox = VoxApp(app)
-    server.newConnection.connect(lambda: vox.overlay.pin(4))
+    server.newConnection.connect(lambda: handle_second_instance(server, vox))
     vox.start()
+
+    if wants_recordings:
+        # Laisse le temps a VoxApp de finir son demarrage (icone, raccourci)
+        # avant d'ouvrir une fenetre au premier plan.
+        QTimer.singleShot(700, vox.open_recordings)
 
     try:
         return app.exec()

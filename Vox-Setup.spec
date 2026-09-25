@@ -16,9 +16,16 @@ les quelques modules de `vox` dont il a besoin (vox.install, vox.paths).
 """
 
 import os
+from pathlib import Path
 
 ONEFILE = os.environ.get("VOX_SETUP_DIR") != "1"
-PAYLOAD = "build/setup-payload"
+PAYLOAD = Path("build/setup-payload")
+
+# Tout ce que tools/build_installer.py depose dans le payload est embarque :
+# ajouter une ressource la-bas suffit, il n'y a rien a reporter ici.
+payload_files = sorted(path for path in PAYLOAD.iterdir() if path.is_file())
+if not payload_files:
+    raise SystemExit(f"Payload vide : {PAYLOAD}. Lance d'abord tools/build_installer.py")
 
 hiddenimports = ["vox", "vox.install", "vox.paths", "tkinter", "tkinter.ttk"]
 
@@ -46,13 +53,7 @@ a = Analysis(
     ["installer/vox_setup.py"],
     pathex=["src", "."],
     binaries=[],
-    datas=[
-        (f"{PAYLOAD}/Vox.exe", "."),
-        (f"{PAYLOAD}/LISEZ-MOI.txt", "."),
-        (f"{PAYLOAD}/.env.example", "."),
-        (f"{PAYLOAD}/Vox.ico", "."),
-        (f"{PAYLOAD}/Vox.png", "."),
-    ],
+    datas=[(str(path), ".") for path in payload_files],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

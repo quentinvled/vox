@@ -34,6 +34,9 @@ from vox import (
 from vox.paths import data_dir
 
 PAYLOAD_FILES = ("Vox.exe", "LISEZ-MOI.txt", ".env.example")
+# Facultatif : sans cette icone, le raccourci « Mes enregistrements » n'est pas
+# cree (voir install.create_shortcuts).
+OPTIONAL_FILES = (install.RECORDINGS_ICON,)
 BG = "#14161b"
 CARD = "#1f2229"
 TEXT = "#f3f5f9"
@@ -106,13 +109,20 @@ def run_steps(on_step: Callable[[int, str, str], None], launch: bool = True) -> 
     for name in PAYLOAD_FILES:
         shutil.copy2(source / name, destination / name)
         log.info("Copie : %s", name)
+    for name in OPTIONAL_FILES:
+        extra = source / name
+        if extra.exists():
+            shutil.copy2(extra, destination / name)
+            log.info("Copie : %s", name)
+        else:
+            log.warning("Ressource facultative absente : %s", name)
     exe = destination / "Vox.exe"
     if not exe.exists():
         raise FileNotFoundError(f"{exe} absent apres la copie")
     log.info("Vox.exe installe : %s (%s octets)", exe, exe.stat().st_size)
 
     on_step(3, "Création des raccourcis…", "Bureau et Menu Démarrer")
-    shortcuts = install.create_shortcuts(exe)
+    shortcuts = install.create_shortcuts(exe, destination / install.RECORDINGS_ICON)
     log.info("Raccourcis crees : %s", shortcuts or "aucun")
 
     on_step(4, "Enregistrement de la désinstallation…", "Paramètres → Applications")

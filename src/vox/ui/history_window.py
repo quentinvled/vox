@@ -182,9 +182,6 @@ class RecordingsWindow(QWidget):
         layout.addLayout(actions)
 
         footer = QHBoxLayout()
-        self.clear_button = QPushButton("Tout supprimer…")
-        self.clear_button.clicked.connect(self._on_clear_all)
-        footer.addWidget(self.clear_button)
         footer.addStretch(1)
         self.retention_label = QLabel("")
         self.retention_label.setObjectName("hint")
@@ -440,23 +437,6 @@ class RecordingsWindow(QWidget):
         )
         if answer == QMessageBox.Yes:
             self.delete_requested.emit(entry.audio)
-
-    def _on_clear_all(self) -> None:
-        if not self._entries:
-            return
-        answer = QMessageBox.question(
-            self,
-            "Tout supprimer",
-            f"Effacer les {len(self._entries)} enregistrements et leurs textes ?\n"
-            "Cette action est définitive.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if answer == QMessageBox.Yes:
-            recordings.clear_all()
-            self.player.stop()
-            self._current = None
-            self.refresh()
 
     def _open_folder(self) -> None:
         from PySide6.QtCore import QUrl as _QUrl

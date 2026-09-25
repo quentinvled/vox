@@ -16,9 +16,13 @@ from PySide6.QtWidgets import QApplication
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from vox.ui.widgets import make_app_icon  # noqa: E402
+from vox.ui.widgets import make_app_icon, make_clipboard_icon  # noqa: E402
 
 SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
+
+# (nom du fichier, fabrique d'icone). Ajouter une icone ici suffit : la
+# construction de l'installeur embarque tout ce qui sort de ce script.
+ICONS = (("Vox", make_app_icon), ("Enregistrements", make_clipboard_icon))
 
 
 def png_bytes(icon: QIcon, size: int) -> bytes:
@@ -60,20 +64,25 @@ def build_ico(icon: QIcon, sizes=SIZES) -> bytes:
 
 def main() -> int:
     app = QApplication(sys.argv)
-    icon = make_app_icon()
-    out = ROOT / "assets" / "Vox.ico"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(build_ico(icon))
-    print(f"{out} ecrit ({out.stat().st_size} octets, {len(SIZES)} tailles)")
+    assets = ROOT / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
 
-    # PNG 256 px : utilise par l'installeur tkinter, qui ne lit pas l'ICO.
-    png = ROOT / "assets" / "Vox.png"
-    icon.pixmap(256, 256).save(str(png), "PNG")
-    print(f"{png} ecrit ({png.stat().st_size} octets)")
+    for stem, factory in ICONS:
+        icon = factory()
 
-    # relecture de controle
-    check = QIcon(str(out))
-    print("tailles relues :", sorted({s.width() for s in check.availableSizes()}))
+        out = assets / f"{stem}.ico"
+        out.write_bytes(build_ico(icon))
+        print(f"{out} ecrit ({out.stat().st_size} octets, {len(SIZES)} tailles)")
+
+        # PNG 256 px : utilise par l'installeur tkinter, qui ne lit pas l'ICO.
+        png = assets / f"{stem}.png"
+        icon.pixmap(256, 256).save(str(png), "PNG")
+        print(f"{png} ecrit ({png.stat().st_size} octets)")
+
+        # relecture de controle
+        check = QIcon(str(out))
+        print("tailles relues :", sorted({s.width() for s in check.availableSizes()}))
+
     del app
     return 0
 

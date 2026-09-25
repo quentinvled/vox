@@ -148,6 +148,102 @@ class IconButton(QPushButton):
             self.setToolTip(tooltip)
 
 
+def _app_gradient(size: int) -> QLinearGradient:
+    """Degrade commun a toutes les icones de Vox."""
+    gradient = QLinearGradient(0, 0, size, size)
+    gradient.setColorAt(0.0, QColor("#5b4fe8"))
+    gradient.setColorAt(0.55, QColor("#3f7ef0"))
+    gradient.setColorAt(1.0, QColor("#35c8f5"))
+    return gradient
+
+
+def _rounded_square(painter: QPainter, size: int, gradient: QLinearGradient) -> None:
+    """Fond arrondi commun, sur toute la surface de l'icone."""
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, size, size), size * 0.22, size * 0.22)
+    painter.fillPath(path, QBrush(gradient))
+
+
+def make_clipboard_icon(size: int = 256) -> QIcon:
+    """Icone « presse-papier », pour le raccourci vers les enregistrements.
+
+    Meme fond que l'icone de l'application, mais un dessin tres different :
+    un presse-papier en contour blanc. Le contour (et non un aplat) est ce qui
+    le rend lisible a 16 px : le trou central evite que la forme ne se
+    transforme en simple carre blanc.
+    """
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    _rounded_square(painter, size, _app_gradient(size))
+
+    white = QColor(255, 255, 255, 248)
+    painter.setPen(Qt.NoPen)
+
+    # Corps : rectangle arrondi evide (regle de remplissage pair-impair).
+    body_w = size * 0.50
+    body_h = size * 0.58
+    body_x = (size - body_w) / 2.0
+    body_y = size * 0.28
+    thickness = max(1.0, size * 0.055)
+
+    body = QPainterPath()
+    body.setFillRule(Qt.OddEvenFill)
+    body.addRoundedRect(
+        QRectF(body_x, body_y, body_w, body_h), size * 0.07, size * 0.07
+    )
+    body.addRoundedRect(
+        QRectF(
+            body_x + thickness,
+            body_y + thickness,
+            body_w - 2 * thickness,
+            body_h - 2 * thickness,
+        ),
+        max(0.0, size * 0.07 - thickness),
+        max(0.0, size * 0.07 - thickness),
+    )
+    painter.fillPath(body, white)
+
+    # Pince : petit rectangle plein qui chevauche le haut du corps.
+    clip_w = size * 0.30
+    clip_h = size * 0.13
+    clip = QPainterPath()
+    clip.addRoundedRect(
+        QRectF((size - clip_w) / 2.0, body_y - clip_h * 0.45, clip_w, clip_h),
+        clip_h * 0.36,
+        clip_h * 0.36,
+    )
+    painter.fillPath(clip, white)
+
+    # Deux traits : ils suggerent du texte et distinguent l'icone d'une simple
+    # corbeille ou d'un bloc-notes vide.
+    line_h = max(1.0, size * 0.045)
+    inset = body_w * 0.22
+    painter.setBrush(white)
+    for index in (0.36, 0.60):
+        painter.drawRoundedRect(
+            QRectF(
+                body_x + inset,
+                body_y + body_h * index,
+                body_w - 2 * inset,
+                line_h,
+            ),
+            line_h / 2.0,
+            line_h / 2.0,
+        )
+
+    painter.end()
+
+    icon = QIcon()
+    for dimension in (16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 96, 128, 256):
+        icon.addPixmap(
+            pixmap.scaled(dimension, dimension, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
+    return icon
+
+
 def make_app_icon(size: int = 256) -> QIcon:
     """Icone « onde vocale » dessinee en code (aucun asset externe).
 
@@ -161,13 +257,7 @@ def make_app_icon(size: int = 256) -> QIcon:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
 
-    path = QPainterPath()
-    path.addRoundedRect(QRectF(0, 0, size, size), size * 0.22, size * 0.22)
-    gradient = QLinearGradient(0, 0, size, size)
-    gradient.setColorAt(0.0, QColor("#5b4fe8"))
-    gradient.setColorAt(0.55, QColor("#3f7ef0"))
-    gradient.setColorAt(1.0, QColor("#35c8f5"))
-    painter.fillPath(path, QBrush(gradient))
+    _rounded_square(painter, size, _app_gradient(size))
 
     # Onde vocale : 5 barres, la centrale plus haute.
     heights = [0.34, 0.60, 0.86, 0.60, 0.34]

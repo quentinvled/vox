@@ -596,12 +596,19 @@ class VoxApp(QObject):
 # ----------------------------------------------------------------------
 # Instance unique et demarrage automatique
 # ----------------------------------------------------------------------
-def acquire_single_instance(parent: QObject | None = None) -> QLocalServer | None:
-    """Renvoie un serveur si on est la premiere instance, sinon None."""
+def acquire_single_instance(
+    parent: QObject | None = None, message: str = "show"
+) -> QLocalServer | None:
+    """Renvoie un serveur si on est la premiere instance, sinon None.
+
+    Si Vox tourne deja, `message` lui est transmis : « show » affiche la pilule,
+    « recordings » ouvre la fenetre des enregistrements. C'est ce qui permet au
+    raccourci « Mes enregistrements » de fonctionner meme quand Vox tourne.
+    """
     socket = QLocalSocket()
     socket.connectToServer(SERVER_NAME)
     if socket.waitForConnected(400):
-        socket.write(b"show")
+        socket.write(message.encode("ascii", "ignore"))
         socket.flush()
         socket.waitForBytesWritten(400)
         socket.disconnectFromServer()
@@ -612,6 +619,25 @@ def acquire_single_instance(parent: QObject | None = None) -> QLocalServer | Non
     if not server.listen(SERVER_NAME):
         return None
     return server
+
+
+def handle_second_instance(server: QLocalServer, app: VoxApp) -> None:
+    """Repond a une deuxieme instance : lit sa demande et agit."""
+    while server.hasPendingConnections():
+        connection = server.nextPendingConnection()
+        if connection is None:
+            continue
+        # La demande est ecrite puis la socket fermee : sans cette attente, on
+        # lirait parfois une socket encore vide.
+        connection.waitForReadyRead(300)
+        request = bytes(connection.readAll()).decode("ascii", "ignore").strip()
+        connection.disconnectFromServer()
+        connection.deleteLater()
+        log.info("Deuxieme instance : demande « %s »", request or "show")
+        if request == "recordings":
+            app.open_recordings()
+        else:
+            app.overlay.show_pill()
 
 
 def _launcher_command() -> str:
@@ -649,4 +675,10 @@ def set_autostart(enabled: bool) -> None:
         pass
 
 
-__all__ = ["VoxApp", "__version__", "acquire_single_instance", "set_autostart"]
+__all__ = [
+    "VoxApp",
+    "__version__",
+    "acquire_single_instance",
+    "handle_second_instance",
+    "set_autostart",
+]

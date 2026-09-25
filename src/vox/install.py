@@ -25,6 +25,8 @@ from .paths import data_dir
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Vox"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 SHORTCUT_NAME = "Vox.lnk"
+RECORDINGS_SHORTCUT_NAME = "Mes enregistrements.lnk"
+RECORDINGS_ICON = "Enregistrements.ico"
 PROCESS_NAME = "Vox.exe"
 
 
@@ -138,26 +140,84 @@ def stop_running(*, exclude_self: bool = True) -> int:
 # ----------------------------------------------------------------------
 _SHORTCUT_SCRIPT = """$ErrorActionPreference = 'Stop'
 $shell = New-Object -ComObject WScript.Shell
-$targets = @({targets})
-foreach ($path in $targets) {{
-    $link = $shell.CreateShortcut($path)
-    $link.TargetPath = '{exe}'
-    $link.WorkingDirectory = '{workdir}'
-    $link.Description = 'Vox - dictee vocale (Ctrl + Maj)'
-    $link.IconLocation = '{exe},0'
+$items = @(
+{items}
+)
+foreach ($item in $items) {{
+    $link = $shell.CreateShortcut($item.Path)
+    $link.TargetPath = $item.Target
+    $link.WorkingDirectory = $item.WorkingDirectory
+    if ($item.Arguments) {{ $link.Arguments = $item.Arguments }}
+    $link.Description = $item.Description
+    $link.IconLocation = $item.Icon
     $link.Save()
 }}
 """
 
 
-def create_shortcuts(exe: Path | None = None) -> list[Path]:
-    """Cree les raccourcis Bureau et Menu Demarrer. Renvoie ceux qui existent."""
+def _ps_quote(value: object) -> str:
+    """Litteral PowerShell entre apostrophes (une apostrophe se double)."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def shortcut_destinations() -> list[Path]:
+    """Raccourcis crees a l'installation : dictee, puis enregistrements."""
+    folders = (desktop_dir(), start_menu_dir())
+    return [folder / SHORTCUT_NAME for folder in folders] + [
+        folder / RECORDINGS_SHORTCUT_NAME for folder in folders
+    ]
+
+
+def create_shortcuts(exe: Path | None = None, icon: Path | None = None) -> list[Path]:
+    """Cree les raccourcis Bureau et Menu Demarrer. Renvoie ceux qui existent.
+
+    Deux entrees : « Vox » (l'application) et « Mes enregistrements », qui
+    lance `Vox.exe --recordings` avec une icone de presse-papier. Le second
+    raccourci n'est cree que si son icone est disponible : sans elle, les deux
+    raccourcis seraient visuellement identiques et donc indechiffrables.
+    """
     target = exe or installed_exe()
-    destinations = [desktop_dir() / SHORTCUT_NAME, start_menu_dir() / SHORTCUT_NAME]
+    workdir = target.parent
+    recordings_icon = icon if icon and icon.exists() else None
 
-    quoted = ", ".join(f"'{path}'" for path in destinations)
-    script = _SHORTCUT_SCRIPT.format(targets=quoted, exe=target, workdir=target.parent)
+    items: list[tuple[Path, str, str, str]] = []
+    for folder in (desktop_dir(), start_menu_dir()):
+        items.append(
+            (
+                folder / SHORTCUT_NAME,
+                "",
+                "Vox - dictee vocale (Ctrl + Maj)",
+                f"{target},0",
+            )
+        )
+    if recordings_icon:
+        for folder in (desktop_dir(), start_menu_dir()):
+            items.append(
+                (
+                    folder / RECORDINGS_SHORTCUT_NAME,
+                    "--recordings",
+                    "Vox - ecouter et retrouver mes dictees",
+                    str(recordings_icon),
+                )
+            )
 
+    blocks = []
+    for path, arguments, description, icon_location in items:
+        blocks.append(
+            "@{\n"
+            f"    Path = {_ps_quote(path)};\n"
+            f"    Target = {_ps_quote(target)};\n"
+            f"    WorkingDirectory = {_ps_quote(workdir)};\n"
+            f"    Arguments = {_ps_quote(arguments)};\n"
+            f"    Description = {_ps_quote(description)};\n"
+            f"    Icon = {_ps_quote(icon_location)};\n"
+            "}"
+        )
+    # Separes par des virgules, et surtout sans virgule finale : PowerShell
+    # refuse `@( ... , )` avec « Missing expression after ',' ».
+    script = _SHORTCUT_SCRIPT.format(items=",\n".join(blocks))
+
+    destinations = [path for path, *_ in items]
     script_path = Path(os.environ.get("TEMP", ".")) / "vox-shortcuts.ps1"
     # UTF-8 avec BOM : PowerShell 5.1 ne lit l'UTF-8 sans BOM de facon fiable
     # que s'il est en ASCII pur.
@@ -184,7 +244,7 @@ def create_shortcuts(exe: Path | None = None) -> list[Path]:
 
 
 def remove_shortcuts() -> None:
-    for path in (desktop_dir() / SHORTCUT_NAME, start_menu_dir() / SHORTCUT_NAME):
+    for path in shortcut_destinations():
         with contextlib.suppress(OSError):
             path.unlink(missing_ok=True)
 

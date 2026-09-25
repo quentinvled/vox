@@ -333,19 +333,6 @@ def stats() -> dict:
     }
 
 
-def clear_all() -> int:
-    """Efface tous les WAV et l'index. Renvoie le nombre de fichiers supprimes."""
-    removed = 0
-    with contextlib.suppress(OSError):
-        for path in recordings_dir().glob("*.wav"):
-            with contextlib.suppress(OSError):
-                path.unlink()
-                removed += 1
-    with contextlib.suppress(OSError):
-        recordings_index_file().unlink()
-    return removed
-
-
 def human_size(value: float) -> str:
     return _fmt_bytes(value)
 
@@ -356,7 +343,6 @@ __all__ = [
     "Recording",
     "append",
     "audio_path",
-    "clear_all",
     "delete",
     "human_size",
     "load",

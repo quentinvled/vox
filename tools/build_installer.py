@@ -104,14 +104,22 @@ def stage_payload(version: str) -> None:
     shutil.copy2(ROOT / ".env.example", PAYLOAD / ".env.example")
 
     # Icones regenerees si besoin (tkinter ne lit pas l'ICO, d'ou le PNG).
-    for name in ("Vox.ico", "Vox.png"):
+    for name in ("Vox.ico", "Vox.png", "Enregistrements.ico", "Enregistrements.png"):
         source = ROOT / "assets" / name
         if not source.exists():
             run([sys.executable, "tools/make_icon.py"], "generation des icones")
         if source.exists():
             shutil.copy2(source, PAYLOAD / name)
 
-    for name in ("Vox.exe", "LISEZ-MOI.txt", ".env.example", "Vox.ico", "Vox.png"):
+    for name in (
+        "Vox.exe",
+        "LISEZ-MOI.txt",
+        ".env.example",
+        "Vox.ico",
+        "Vox.png",
+        "Enregistrements.ico",
+        "Enregistrements.png",
+    ):
         staged = PAYLOAD / name
         if not staged.exists() or staged.stat().st_size == 0:
             raise SystemExit(f"Ressource manquante ou vide : {name}")
