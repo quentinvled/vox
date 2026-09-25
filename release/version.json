@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "url": "https://github.com/quentinvled/vox/releases/latest",
-  "notes": "Version initiale : dictee Ctrl+Maj, pilule flottante, statistiques, installeur.",
+  "url": "https://github.com/quentinvled/vox/releases/download/v0.1.0/Vox-Setup-0.1.0.exe",
+  "notes": "Exemple de manifeste. Le vrai est genere automatiquement par GitHub Actions a chaque release, puis publie comme asset « version.json » de la derniere release.",
   "published_at": "2026-09-25"
 }

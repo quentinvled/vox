@@ -317,7 +317,9 @@ class SettingsWindow(QDialog):
         update_form.addRow("", self.update_check)
 
         self.manifest_edit = QLineEdit()
-        self.manifest_edit.setPlaceholderText("https://exemple.tld/vox/version.json")
+        self.manifest_edit.setPlaceholderText(
+            "https://github.com/quentinvled/vox/releases/latest/download/version.json"
+        )
         update_form.addRow("URL du manifeste", self.manifest_edit)
 
         update_hint = QLabel(

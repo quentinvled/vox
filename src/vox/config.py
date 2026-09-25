@@ -28,6 +28,13 @@ DEFAULT_CHAT_MODEL = "google/gemini-2.5-flash"
 DEFAULT_STT_MODEL_GROQ = "whisper-large-v3-turbo"
 DEFAULT_CHAT_MODEL_GROQ = "llama-3.3-70b-versatile"
 
+# Manifeste de mise a jour : un asset « version.json » attache a la derniere
+# release GitHub. L'URL est stable tant qu'une nouvelle release est publiee
+# (voir .github/workflows/release.yml).
+DEFAULT_MANIFEST_URL = (
+    "https://github.com/quentinvled/vox/releases/latest/download/version.json"
+)
+
 # Cle d'environnement / champ de settings associe a chaque fournisseur.
 ENV_KEYS: dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
@@ -117,7 +124,7 @@ class Settings:
 
     # --- Mises a jour ---
     check_updates: bool = True
-    update_manifest_url: str = ""
+    update_manifest_url: str = DEFAULT_MANIFEST_URL
     show_overlay_on_result: bool = True
 
     # --- Divers ---

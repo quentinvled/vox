@@ -1,6 +1,7 @@
 [project]
 name = "vox"
-version = "0.1.0"
+# La version est lue dans src/vox/__init__.py (source de verite unique).
+dynamic = ["version"]
 description = "Dictee vocale globale : transcription Whisper + reformulation LLM via OpenRouter"
 requires-python = ">=3.13"
 dependencies = [
@@ -17,6 +18,9 @@ vox = "vox.__main__:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/vox/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vox"]

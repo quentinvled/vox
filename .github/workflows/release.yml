@@ -1,0 +1,74 @@
+name: Release
+
+# Se declenche quand un tag « vX.Y.Z » est pousse (via tools/release.py).
+on:
+  push:
+    tags:
+      - "v*"
+
+# Necessaire pour que GITHUB_TOKEN puisse creer la release.
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Recuperer le depot (avec l'historique des tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Installer uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Installer Python 3.13
+        run: uv python install 3.13
+
+      - name: Installer les dependances (dont PyInstaller)
+        run: uv sync --group dev
+
+      - name: Verifier que le tag correspond a la version du code
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(uv run python -c 'import vox; print(vox.__version__)')"
+          echo "tag=$tag  version=$version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Le tag v$tag ne correspond pas a __version__=$version"
+            exit 1
+          fi
+
+      - name: Construire Vox et l'installeur
+        run: uv run python tools/build_installer.py --rebuild
+
+      - name: Generer le manifeste de mise a jour
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Vox-Setup-${version}.exe"
+          prev="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$prev" ]; then range="${prev}..${GITHUB_REF_NAME}"; else range="HEAD"; fi
+          notes="$(git log --pretty=format:'- %s' "$range" | head -20)"
+          uv run python tools/make_manifest.py \
+            --version "$version" \
+            --url "$url" \
+            --notes "$notes" \
+            --out dist-share/version.json
+          echo "--- manifeste ---"
+          cat dist-share/version.json
+
+      - name: Publier la release GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Vox ${{ github.ref_name }}"
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist-share/Vox-Setup-*.exe
+            dist-share/Vox-Setup-*.exe.sha256
+            dist-share/version.json
