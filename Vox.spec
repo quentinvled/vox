@@ -63,7 +63,6 @@ a = Analysis(
         "PySide6.QtQuick3D",
         "PySide6.QtQml",
         "PySide6.Qt3DCore",
-        "PySide6.QtMultimedia",
         "PySide6.QtMultimediaWidgets",
         "PySide6.QtCharts",
         "PySide6.QtDataVisualization",

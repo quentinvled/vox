@@ -37,6 +37,17 @@ def models_cache_file() -> Path:
     return data_dir() / "models-cache.json"
 
 
+def recordings_dir() -> Path:
+    """WAV de toutes les dictees, conserves localement."""
+    path = data_dir() / "enregistrements"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def recordings_index_file() -> Path:
+    return data_dir() / "enregistrements.jsonl"
+
+
 def log_file() -> Path:
     return data_dir() / "vox.log"
 

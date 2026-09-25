@@ -105,6 +105,12 @@ class Settings:
     overlay_hide_delay: int = 0
     sounds: bool = True
     history_enabled: bool = True
+    # Conserve le WAV de chaque dictee dans le dossier de donnees.
+    save_recordings: bool = True
+    # 0 = on garde les enregistrements indefiniment.
+    recording_retention_days: int = 30
+    # La pilule n'apparait que pendant l'ecoute puis disparait d'elle-meme.
+    hide_after_listening: bool = True
     autostart: bool = False
     notify_on_start: bool = True
     show_in_taskbar: bool = False

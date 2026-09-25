@@ -13,7 +13,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
-from . import __version__, injector, models, sounds, updates
+from . import __version__, injector, models, recordings, sounds, updates
 from . import config as config_module
 from .config import HOTKEY_CHOICES, Settings
 from .hotkey import EVENT_CANCEL, EVENT_START, EVENT_STOP, HotkeyManager
@@ -21,6 +21,7 @@ from .models import Catalogue
 from .paths import data_dir, project_root
 from .pipeline import Pipeline
 from .reword import TONES
+from .ui.history_window import RecordingsWindow
 from .ui.overlay import Overlay
 from .ui.settings_window import SettingsWindow
 from .ui.stats_window import StatsWindow
@@ -32,6 +33,9 @@ log = logging.getLogger("vox")
 
 SERVER_NAME = "vox-single-instance"
 AUTOSTART_NAME = "Vox"
+
+# Duree d'affichage d'un message d'erreur quand la pilule se cache d'elle-meme.
+NOTICE_SECONDS = 6
 
 
 class _CatalogueLoader(QThread):
@@ -74,6 +78,7 @@ class VoxApp(QObject):
         self.catalogue = models.fallback(self.settings.provider)
         self._settings_window: SettingsWindow | None = None
         self._stats_window: StatsWindow | None = None
+        self._recordings_window: RecordingsWindow | None = None
         self._pending_enter = False
         self._recording_started_at = 0.0
         self._loader: _CatalogueLoader | None = None
@@ -113,6 +118,7 @@ class VoxApp(QObject):
         self.tray.copy_requested.connect(self.pipeline.copy_last)
         self.tray.settings_requested.connect(self.open_settings)
         self.tray.stats_requested.connect(self.open_stats)
+        self.tray.history_requested.connect(self.open_recordings)
         self.tray.update_requested.connect(self.open_update)
         self.tray.quit_requested.connect(self.quit)
         self.tray.model_selected.connect(self.set_model)
@@ -134,6 +140,7 @@ class VoxApp(QObject):
         self.pipeline.notice.connect(self._on_notice)
         self.pipeline.finalized.connect(self._on_finalized)
         self.pipeline.transcript_ready.connect(self._on_transcript)
+        self.pipeline.retranscribed.connect(self._on_retranscribed)
 
         self._hotkey_timer = QTimer(self)
         self._hotkey_timer.setInterval(35)
@@ -163,6 +170,9 @@ class VoxApp(QObject):
         else:
             self.overlay.hide_pill()
         sounds.dump_wavs()
+        # Purge des vieux enregistrements, en tache de fond pour ne pas retarder
+        # le demarrage.
+        QTimer.singleShot(4000, self._prune_recordings)
         self.tray.show()
         self.tray.set_status("Prêt")
         self._hotkey_timer.start()
@@ -308,6 +318,17 @@ class VoxApp(QObject):
     # ------------------------------------------------------------------
     # Etats
     # ------------------------------------------------------------------
+    def _show_progress(self) -> None:
+        """Pilule pendant le traitement.
+
+        Par defaut elle disparait des la fin de l'ecoute : l'utilisateur n'a
+        rien a fermer. Le reglage inverse l'ancien comportement.
+        """
+        if self.settings.hide_after_listening:
+            self.overlay.hide_pill()
+        else:
+            self.overlay.show_pill()
+
     def _on_recording_changed(self, recording: bool) -> None:
         if recording:
             self._recording_started_at = time.monotonic()
@@ -329,36 +350,43 @@ class VoxApp(QObject):
         elif state == "idle":
             self.overlay.set_state("idle", detail=f"{self.hotkey_label} pour dicter")
             self.tray.set_status("Pret")
-            self.overlay.show_pill()
+            self._show_progress()
         elif state == "transcribing":
-            self.overlay.show_pill()
             self.overlay.set_state("transcribing", detail="Patientez…")
             self.tray.set_status("Transcription…")
+            self._show_progress()
         elif state == "rewording":
-            self.overlay.show_pill()
             self.overlay.set_state("rewording", detail="Patientez…")
             self.tray.set_status("Reformulation…")
+            self._show_progress()
         elif state == "done":
             self.tray.set_status("Prêt")
-            if self.settings.show_overlay_on_result:
+            # L'etat doit sortir de « transcription », sinon le masquage
+            # automatique se croit encore en plein traitement et ne masque
+            # jamais la pilule.
+            self.overlay.set_state("done", message=self.pipeline.last_final)
+            if self.settings.show_overlay_on_result and not self.settings.hide_after_listening:
                 self.overlay.show_pill()
             else:
                 self.overlay.hide_pill()
         elif state == "error":
-            self.overlay.show_pill()
+            self.overlay.show_pill(NOTICE_SECONDS)
             self.tray.set_status("Erreur")
 
     def _on_notice(self, level: str, message: str) -> None:
+        # Un message informe d'un echec ou d'une absence de texte : il doit se
+        # voir, mais pas rester. Il s'efface donc tout seul.
+        delay = NOTICE_SECONDS if self.settings.hide_after_listening else None
         if level == "error":
             self.overlay.set_state("error", message)
-            self.overlay.show_pill()
+            self.overlay.show_pill(delay)
             if self.tray.isSystemTrayAvailable():
                 self.tray.showMessage("Vox", message, QSystemTrayIcon.Warning, 6000)
         else:
             if not self.settings.show_overlay_on_result:
                 return
             self.overlay.set_state("done", message)
-            self.overlay.show_pill()
+            self.overlay.show_pill(delay)
 
     def _on_transcript(self, text: str, _meta: dict) -> None:
         self.overlay.set_state("transcribing", detail=text[:70] + ("…" if len(text) > 70 else ""))
@@ -413,10 +441,22 @@ class VoxApp(QObject):
             self._settings_window.activateWindow()
             return
         window = SettingsWindow(self.settings, self.catalogue)
+        # Le bouton « Ouvrir les enregistrements » ferme d'abord les reglages,
+        # sinon l'historique s'afficherait derriere ce dialogue modal.
+        state = {"recordings": False}
+
+        def _on_open_recordings() -> None:
+            state["recordings"] = True
+            window.accept()
+
+        window.open_recordings_requested.connect(_on_open_recordings)
         self._settings_window = window
-        if window.exec():
-            self._commit_settings(window.values())
+        accepted = window.exec()
         self._settings_window = None
+        if accepted:
+            self._commit_settings(window.values())
+        if state["recordings"]:
+            self.open_recordings()
 
     def check_updates(self) -> None:
         """Interroge le manifeste de version (silencieux en cas d'echec)."""
@@ -465,6 +505,38 @@ class VoxApp(QObject):
         self._stats_window.raise_()
         self._stats_window.activateWindow()
 
+    def open_recordings(self) -> None:
+        """Ouvre (ou ramene au premier plan) l'historique des enregistrements."""
+        if self._recordings_window is None:
+            window = RecordingsWindow(self.settings)
+            window.copy_requested.connect(self.pipeline.copy_text)
+            window.insert_requested.connect(self.pipeline.insert_text)
+            window.retranscribe_requested.connect(self.pipeline.retranscribe)
+            window.delete_requested.connect(self._delete_recording)
+            self._recordings_window = window
+        self._recordings_window.apply_theme(self.settings.theme)
+        self._recordings_window.refresh()
+        self._recordings_window.show()
+        self._recordings_window.raise_()
+        self._recordings_window.activateWindow()
+
+    def _delete_recording(self, audio: str) -> None:
+        recordings.delete(audio)
+        if self._recordings_window is not None:
+            self._recordings_window.on_deleted(audio)
+
+    def _on_retranscribed(self, audio: str, text: str) -> None:
+        if self._recordings_window is not None:
+            self._recordings_window.on_retranscribed(audio, text)
+
+    def _prune_recordings(self) -> None:
+        """Supprime les enregistrements plus vieux que la duree de conservation."""
+        if self.settings.recording_retention_days <= 0:
+            return
+        removed = recordings.prune(self.settings.recording_retention_days)
+        if removed and self._recordings_window is not None:
+            self._recordings_window.refresh()
+
     def _commit_settings(self, settings: Settings) -> None:
         previous = self.settings
         self.settings = settings
@@ -506,6 +578,8 @@ class VoxApp(QObject):
         self.overlay.apply_theme(self.settings.theme)
         if self._stats_window is not None:
             self._stats_window.apply_theme(self.settings.theme)
+        if self._recordings_window is not None:
+            self._recordings_window.apply_theme(self.settings.theme)
 
     # ------------------------------------------------------------------
     def quit(self) -> None:

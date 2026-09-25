@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import recordings
 from ..api import PROVIDERS, Client
 from ..config import HOTKEY_CHOICES, HOTKEY_MODIFIERS, Settings
 from ..models import Catalogue
@@ -137,6 +138,8 @@ class _KeyTester(QThread):
 
 class SettingsWindow(QDialog):
     """Boîte de dialogue de configuration."""
+
+    open_recordings_requested = Signal()
 
     def __init__(self, settings: Settings, catalogue: Catalogue, parent=None) -> None:
         super().__init__(parent)
@@ -394,9 +397,19 @@ class SettingsWindow(QDialog):
         self.hide_delay_spin.setSpecialValueText("jamais")
         self.hide_delay_spin.setToolTip(
             "Délai avant que la pilule se masque toute seule. 0 = elle reste "
-            "affichée jusqu'à ce que tu la fermes avec le ✕."
+            "affichée jusqu'à ce que tu la fermes avec le ✕.\n\n"
+            "Sans effet tant que « Disparaître dès la fin de l'écoute » est cochée : "
+            "la pilule ne survit alors pas à l'enregistrement."
         )
         ui_form.addRow("Masquer la pilule après", self.hide_delay_spin)
+
+        self.hide_after_check = QCheckBox("Disparaître dès la fin de l'écoute")
+        self.hide_after_check.setToolTip(
+            "La pilule ne s'affiche que pendant l'enregistrement, puis s'efface "
+            "toute seule. Les erreurs restent visibles quelques secondes."
+        )
+        self.hide_after_check.toggled.connect(self._sync_hide_delay_state)
+        ui_form.addRow("", self.hide_after_check)
 
         self.sounds_check = QCheckBox("Signaux sonores")
         ui_form.addRow("", self.sounds_check)
@@ -418,6 +431,42 @@ class SettingsWindow(QDialog):
         ui_form.addRow("", self.taskbar_check)
 
         outer.addWidget(ui_box)
+
+        rec_box = QGroupBox("Enregistrements")
+        rec_form = QFormLayout(rec_box)
+        rec_form.setContentsMargins(14, 16, 14, 12)
+        rec_form.setSpacing(9)
+
+        self.save_recordings_check = QCheckBox("Conserver l'audio de chaque dictée")
+        self.save_recordings_check.setToolTip(
+            "Chaque dictée est écrite en WAV dans le dossier de données avant "
+            "l'appel à l'API. Elles sont réécoutables depuis « Enregistrements… »."
+        )
+        self.save_recordings_check.toggled.connect(self._sync_recording_state)
+        rec_form.addRow("", self.save_recordings_check)
+
+        self.retention_spin = QSpinBox()
+        self.retention_spin.setRange(0, 3650)
+        self.retention_spin.setSuffix(" jours")
+        self.retention_spin.setSpecialValueText("illimité")
+        self.retention_spin.setToolTip(
+            "Les enregistrements plus vieux sont effacés au démarrage. "
+            "0 = on garde tout."
+        )
+        rec_form.addRow("Conservation", self.retention_spin)
+
+        rec_actions = QHBoxLayout()
+        rec_actions.setSpacing(6)
+        self.open_recordings_button = QPushButton("Ouvrir les enregistrements")
+        self.open_recordings_button.clicked.connect(self.open_recordings_requested.emit)
+        rec_actions.addWidget(self.open_recordings_button)
+        rec_actions.addStretch(1)
+        self.records_size_label = QLabel("")
+        self.records_size_label.setObjectName("hint")
+        rec_actions.addWidget(self.records_size_label)
+        rec_form.addRow("", rec_actions)
+
+        outer.addWidget(rec_box)
 
         tray_hint = QLabel(
             "Vox n'a pas de fenêtre principale : il vit dans la zone de notification "
@@ -526,6 +575,8 @@ class SettingsWindow(QDialog):
         self.reword_check.toggled.connect(self._sync_reword_state)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         self._sync_hotkey_state()
+        self._sync_hide_delay_state()
+        self._sync_recording_state()
 
     def _on_provider_changed(self, index: int) -> None:
         provider = self.provider_combo.itemData(index)
@@ -544,6 +595,25 @@ class SettingsWindow(QDialog):
         self.key_link.setText(
             f'<a href="{info.console_url}" style="color:inherit;text-decoration:none">'
             f"Obtenir une cle → {info.console_url}</a>"
+        )
+
+    def _sync_hide_delay_state(self) -> None:
+        # Le delai ne sert que si la pilule survit a la fin de l'ecoute.
+        self.hide_delay_spin.setEnabled(not self.hide_after_check.isChecked())
+
+    def _sync_recording_state(self) -> None:
+        on = self.save_recordings_check.isChecked()
+        self.retention_spin.setEnabled(on)
+        self.open_recordings_button.setEnabled(True)
+        self._refresh_records_size()
+
+    def _refresh_records_size(self) -> None:
+        info = recordings.stats()
+        if not info["count"]:
+            self.records_size_label.setText("aucun enregistrement")
+            return
+        self.records_size_label.setText(
+            f"{info['count']} enregistrement(s) · {info['size']}"
         )
 
     def _sync_hotkey_state(self) -> None:
@@ -672,7 +742,12 @@ class SettingsWindow(QDialog):
         self.min_seconds_spin.setValue(settings.min_record_seconds)
         self._select_data(self.theme_combo, settings.theme)
         self.hide_delay_spin.setValue(settings.overlay_hide_delay)
+        self.hide_after_check.setChecked(settings.hide_after_listening)
         self.sounds_check.setChecked(settings.sounds)
+        self.save_recordings_check.setChecked(settings.save_recordings)
+        self.retention_spin.setValue(settings.recording_retention_days)
+        self._sync_hide_delay_state()
+        self._sync_recording_state()
         self.overlay_result_check.setChecked(settings.show_overlay_on_result)
         self.history_check.setChecked(settings.history_enabled)
         self.notify_check.setChecked(settings.notify_on_start)
@@ -742,6 +817,9 @@ class SettingsWindow(QDialog):
             min_record_seconds=self.min_seconds_spin.value(),
             theme=self.theme_combo.currentData(),
             overlay_hide_delay=self.hide_delay_spin.value(),
+            hide_after_listening=self.hide_after_check.isChecked(),
+            save_recordings=self.save_recordings_check.isChecked(),
+            recording_retention_days=self.retention_spin.value(),
             sounds=self.sounds_check.isChecked(),
             show_overlay_on_result=self.overlay_result_check.isChecked(),
             history_enabled=self.history_check.isChecked(),

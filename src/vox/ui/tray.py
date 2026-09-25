@@ -24,6 +24,7 @@ class Tray(QSystemTrayIcon):
     autostart_toggled = Signal(bool)
     taskbar_toggled = Signal(bool)
     stats_requested = Signal()
+    history_requested = Signal()
     update_requested = Signal()
 
     def __init__(
@@ -84,6 +85,13 @@ class Tray(QSystemTrayIcon):
         stats_action = QAction("Statistiques…", self._menu)
         stats_action.triggered.connect(self.stats_requested.emit)
         self._menu.addAction(stats_action)
+
+        history_action = QAction("Enregistrements…", self._menu)
+        history_action.setToolTip(
+            "Réécouter les dictées conservées, copier leur texte, les retranscrire"
+        )
+        history_action.triggered.connect(self.history_requested.emit)
+        self._menu.addAction(history_action)
 
         icon_help = QAction("Où est mon icône ?", display_menu)
         icon_help.triggered.connect(self.icon_help_requested.emit)

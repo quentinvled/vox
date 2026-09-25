@@ -11,7 +11,7 @@ from datetime import datetime
 from PySide6.QtCore import QObject, QThread, Signal
 
 from . import config as config_module
-from . import injector, reword, sounds
+from . import injector, recordings, reword, sounds
 from .api import ApiError, Client
 from .config import Settings
 from .paths import history_file
@@ -56,6 +56,7 @@ class Pipeline(QObject):
     notice = Signal(str, str)  # (niveau: info|error, message)
     transcript_ready = Signal(str, dict)
     finalized = Signal(str, dict)
+    retranscribed = Signal(str, str)  # (nom du fichier audio, nouveau texte)
 
     def __init__(self, settings: Settings) -> None:
         super().__init__()
@@ -126,20 +127,29 @@ class Pipeline(QObject):
             sounds.play("stop")
 
         duration = len(wav) / (self.settings.sample_rate * 2) if wav else 0.0
+        # Le WAV part sur le disque avant tout appel reseau : rien n'est perdu
+        # si la transcription echoue.
+        audio = ""
+        if self.settings.save_recordings:
+            audio = recordings.save_audio(wav, duration)
         if not wav or duration < self.settings.min_record_seconds:
+            if audio:
+                recordings.note(audio, "court", seconds=duration)
             self.status_changed.emit("idle")
             self._notify("info", "Rien capté.")
             return
         if not had_sound:
             # Inutile d'appeler l'API : sur du silence, les modeles Whisper
             # inventent du texte (caracteres chinois, « Sous-titres », etc.).
+            if audio:
+                recordings.note(audio, "vide", seconds=duration)
             self.status_changed.emit("idle")
             self._notify("info", "Aucun son détecté.")
             return
 
         self._set_busy(True)
         self.status_changed.emit("transcribing")
-        self.worker.submit(lambda: self._transcribe(wav, duration))
+        self.worker.submit(lambda: self._transcribe(wav, duration, audio))
 
     def cancel_recording(self) -> None:
         """Abandon silencieux (autre touche pressee pendant la combinaison)."""
@@ -170,7 +180,17 @@ class Pipeline(QObject):
             self._cached_signature = signature
         return self._cached_client
 
-    def _transcribe(self, wav: bytes, duration: float) -> None:
+    def _transcribe(self, wav: bytes, duration: float, audio: str = "") -> None:
+        def keep(status: str, error: str = "") -> None:
+            if audio:
+                recordings.note(
+                    audio,
+                    status,
+                    seconds=duration,
+                    error=error,
+                    model=self.settings.stt_model,
+                )
+
         try:
             client = self._client()
             result = client.transcribe(
@@ -180,14 +200,17 @@ class Pipeline(QObject):
                 vocabulary=self.settings.vocabulary_prompt,
             )
         except ApiError as exc:
+            keep("erreur", str(exc))
             self._fail(str(exc), key_missing=not self.settings.effective_key)
             return
         except Exception as exc:
+            keep("erreur", str(exc))
             self._fail(f"Erreur réseau : {exc}")
             return
 
         text = _post_process(result.text, self.settings)
         if not text or _looks_like_hallucination(text, self.settings.language):
+            keep("vide")
             self._set_busy(False)
             self.status_changed.emit("idle")
             self._notify("info", "Rien de reconnaissable.")
@@ -221,6 +244,18 @@ class Pipeline(QObject):
             injection_error = str(exc)
 
         self._save_history(final, meta)
+        if audio:
+            recordings.note(
+                audio,
+                "ok",
+                seconds=meta.get("seconds") or duration,
+                text=final,
+                transcript=text,
+                model=meta.get("model", ""),
+                cost=meta.get("cost") or 0.0,
+                latency_ms=meta.get("latency_ms") or 0,
+                language=meta.get("language"),
+            )
         self._set_busy(False)
 
         if injection_error:
@@ -316,6 +351,78 @@ class Pipeline(QObject):
             self._notify("info", "Copie dans le presse-papier.")
         except injector.InjectorError as exc:
             self._fail(str(exc))
+
+    # ------------------------------------------------------------------
+    # Historique des enregistrements
+    # ------------------------------------------------------------------
+    def copy_text(self, text: str) -> bool:
+        """Copie un texte quelconque (depuis l'historique)."""
+        if not text.strip():
+            return False
+        try:
+            injector.set_clipboard_text(text)
+            return True
+        except injector.InjectorError as exc:
+            self._fail(str(exc))
+            return False
+
+    def insert_text(self, text: str) -> None:
+        """Reinsere dans la fenetre active un texte venu de l'historique."""
+        if not text.strip():
+            return
+        self.last_final = text
+        self.reinsert_last()
+
+    def retranscribe(self, audio: str) -> None:
+        """Relance la transcription d'un enregistrement deja sur disque."""
+        path = recordings.audio_path(audio)
+        if not path.exists():
+            self._notify("error", "Fichier audio introuvable.")
+            return
+        if self._busy:
+            self._notify("info", "Une transcription est déjà en cours.")
+            return
+        self._set_busy(True)
+        self.status_changed.emit("transcribing")
+
+        def job() -> None:
+            try:
+                wav = path.read_bytes()
+                client = self._client()
+                result = client.transcribe(
+                    wav,
+                    self.settings.stt_model,
+                    language=self.settings.language or None,
+                    vocabulary=self.settings.vocabulary_prompt,
+                )
+            except ApiError as exc:
+                self._fail(str(exc))
+                return
+            except Exception as exc:
+                self._fail(f"Erreur réseau : {exc}")
+                return
+
+            text = _post_process(result.text, self.settings)
+            if not text or _looks_like_hallucination(text, self.settings.language):
+                self._set_busy(False)
+                self.status_changed.emit("done")
+                self._notify("info", "Rien de reconnaissable dans cet enregistrement.")
+                return
+
+            recordings.update_text(
+                audio,
+                text,
+                model=result.model or self.settings.stt_model,
+                latency_ms=result.latency_ms or 0,
+            )
+            self.last_transcript = text
+            self.last_final = text
+            self._set_busy(False)
+            self.status_changed.emit("done")
+            self.retranscribed.emit(audio, text)
+            self._notify("info", "Retranscription prête.")
+
+        self.worker.submit(job)
 
     # ------------------------------------------------------------------
     # Utilitaires

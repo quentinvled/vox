@@ -43,6 +43,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 "src/vox/api.py" = ["S110"]
 # L'historique est un journal local : l'heure locale naive est volontaire.
 "src/vox/pipeline.py" = ["DTZ005"]
+"src/vox/recordings.py" = ["DTZ005"]
 
 [dependency-groups]
 dev = [
