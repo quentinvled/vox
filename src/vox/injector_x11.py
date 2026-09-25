@@ -87,7 +87,8 @@ def set_clipboard_text(text: str) -> None:
         if result.returncode == 0:
             return
     raise InjectorError(
-        "Aucun outil de presse-papier trouve (installe xclip, xsel ou wl-clipboard)."
+        "Écriture dans le presse-papier impossible "
+        "(xclip, xsel ou wl-copy ont échoué ou sont absents)."
     )
 
 
