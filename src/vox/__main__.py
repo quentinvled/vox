@@ -223,9 +223,11 @@ def main_cli() -> int:
         return 0
 
     if args.stats:
-        from .stats import compute, format_money, summary_lines
+        from . import config as config_module
+        from .stats import DEFAULT_TYPING_WPM, compute, format_money, summary_lines
 
-        stats = compute()
+        settings = config_module.load()
+        stats = compute(typing_wpm=settings.typing_wpm or DEFAULT_TYPING_WPM)
         if not stats.entries:
             print("Aucune dictée enregistrée pour l'instant.")
             return 0

@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 from .paths import config_file, data_dir, project_root
+from .stats import DEFAULT_TYPING_WPM
 
 # --- Modeles par defaut ---------------------------------------------------
 
@@ -129,6 +130,10 @@ class Settings:
 
     # --- Divers ---
     extras: dict = field(default_factory=dict)
+
+    # --- Statistiques ---
+    # Vitesse de frappe de reference (mots/minute) pour le « temps gagne ».
+    typing_wpm: float = DEFAULT_TYPING_WPM
 
     # ------------------------------------------------------------------
     @property

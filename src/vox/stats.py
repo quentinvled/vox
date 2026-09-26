@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta
 from .paths import history_file
 
 # Vitesses de reference (mots par minute).
-DEFAULT_TYPING_WPM = 40.0
+DEFAULT_TYPING_WPM = 50.0
 DEFAULT_SPEAKING_WPM = 140.0
 
 

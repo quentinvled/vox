@@ -373,6 +373,29 @@ class SettingsWindow(QDialog):
 
         outer.addWidget(trigger_box)
 
+        # --- Statistiques ---
+        stats_box = QGroupBox("Statistiques")
+        stats_form = QFormLayout(stats_box)
+        self.typing_spin = NoWheelSpinBox()
+        self.typing_spin.setRange(10, 200)
+        self.typing_spin.setSuffix(" mots/min")
+        self.typing_spin.setToolTip(
+            "Vitesse de frappe de référence, utilisée pour estimer le « temps "
+            "gagné » dans le tableau de bord. 40 est la moyenne ; un bon dactylo "
+            "tape 60 à 80 mots/minute."
+        )
+        stats_form.addRow("Vitesse de frappe", self.typing_spin)
+        outer.addWidget(stats_box)
+
+        stats_hint = QLabel(
+            "Le « temps gagné » compare le temps qu'il t'aurait fallu pour taper "
+            "le même texte à cette vitesse au temps réellement passé à dicter. "
+            "Ajuste-la à ta frappe pour une estimation réaliste."
+        )
+        stats_hint.setObjectName("hint")
+        stats_hint.setWordWrap(True)
+        outer.addWidget(stats_hint)
+
         outer.addStretch(1)
         return page
 
@@ -1007,6 +1030,7 @@ class SettingsWindow(QDialog):
         self.history_check.setChecked(settings.history_enabled)
         self.notify_check.setChecked(settings.notify_on_start)
         self.taskbar_check.setChecked(settings.show_in_taskbar)
+        self.typing_spin.setValue(int(settings.typing_wpm))
 
         self._select_data(self.method_combo, settings.inject_method)
         if self.paste_combo.findText(settings.paste_keys) < 0:
@@ -1087,6 +1111,7 @@ class SettingsWindow(QDialog):
             reword_enabled=self.reword_check.isChecked(),
             reword_tone=self.tone_combo.currentData(),
             reword_custom_prompt=self.custom_custom_text(),
+            typing_wpm=float(self.typing_spin.value()),
         )
 
     def custom_custom_text(self) -> str:

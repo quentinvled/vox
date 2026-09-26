@@ -289,16 +289,10 @@ class StatsWindow(QWidget):
         spend.addWidget(self.spend_status)
         page_layout.addWidget(spend_frame)
 
-        note = QLabel(
-            "Le « temps gagné » compare le temps qu'il aurait fallu pour taper le "
-            "même texte (à 40 mots/minute) au temps réellement passé à dicter "
-            "(parole + attente de la transcription). Le « mesuré localement » ne "
-            "compte que les dictées faites avec Vox ; s'il est inférieur au total du "
-            "compte, la différence vient d'autres usages de la même clé."
-        )
-        note.setObjectName("hint")
-        note.setWordWrap(True)
-        page_layout.addWidget(note)
+        self.note_label = QLabel("")
+        self.note_label.setObjectName("hint")
+        self.note_label.setWordWrap(True)
+        page_layout.addWidget(self.note_label)
         page_layout.addStretch(1)
 
     def _make_panel(self, title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -330,6 +324,11 @@ class StatsWindow(QWidget):
         self._period = self.period_combo.itemData(index) or "30"
         self.refresh()
 
+    @property
+    def _typing_wpm(self) -> float:
+        """Vitesse de frappe de reference choisie par l'utilisateur."""
+        return float(getattr(self.settings, "typing_wpm", 0) or DEFAULT_TYPING_WPM)
+
     def _period_window(self, stats: Stats) -> tuple[datetime | None, int]:
         """Renvoie (depuis, nombre_de_jours_pour_le_graphique)."""
         days = {"7": 7, "30": 30, "90": 90}.get(self._period, 0)
@@ -342,10 +341,19 @@ class StatsWindow(QWidget):
 
     # ------------------------------------------------------------------
     def refresh(self) -> None:
-        all_stats = compute(typing_wpm=DEFAULT_TYPING_WPM, window_days=1)
+        typing_wpm = self._typing_wpm
+        all_stats = compute(typing_wpm=typing_wpm, window_days=1)
         since, chart_days = self._period_window(all_stats)
         stats = self.stats = compute(
-            typing_wpm=DEFAULT_TYPING_WPM, window_days=chart_days, since=since
+            typing_wpm=typing_wpm, window_days=chart_days, since=since
+        )
+        self.note_label.setText(
+            "Le « temps gagné » compare le temps qu'il aurait fallu pour taper le "
+            f"même texte (à {typing_wpm:.0f} mots/minute) au temps réellement passé "
+            "à dicter (parole + attente de la transcription). Le « mesuré localement » "
+            "ne compte que les dictées faites avec Vox ; s'il est inférieur au total "
+            "du compte, la différence vient d'autres usages de la même clé. "
+            "Vitesse réglable dans Réglages → Général."
         )
 
         self.card_saved.set(
@@ -439,7 +447,7 @@ class StatsWindow(QWidget):
         self.rows["p95"].set(f"{stats.p95_latency_ms} ms")
         self.rows["transcribe"].set(format_duration(stats.transcription_seconds))
         self.rows["wpm"].set(f"{stats.speaking_wpm:.0f} mots/min")
-        self.rows["typing"].set(f"{DEFAULT_TYPING_WPM:.0f} mots/min")
+        self.rows["typing"].set(f"{self._typing_wpm:.0f} mots/min")
         self.rows["avg_len"].set(format_duration(stats.avg_recording_seconds))
         self.rows["max_len"].set(format_duration(stats.max_recording_seconds))
         if stats.entries:

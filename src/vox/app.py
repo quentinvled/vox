@@ -528,6 +528,7 @@ class VoxApp(QObject):
         if self._stats_window is None:
             self._stats_window = StatsWindow(self.settings)
             self._stats_window.history_requested.connect(self.open_recordings)
+        self._stats_window.settings = self.settings
         self._stats_window.apply_theme(self.settings.theme)
         self._stats_window.refresh()
         self._stats_window.show()
@@ -603,6 +604,11 @@ class VoxApp(QObject):
 
         self.overlay.restore_position(settings.overlay_position)
         self._refresh_model_views()
+        if self._stats_window is not None:
+            # Le tableau de bord garde une reference aux reglages : on la met a
+            # jour pour qu'un simple « Actualiser » prenne la nouvelle vitesse.
+            self._stats_window.settings = settings
+            self._stats_window.refresh()
         self.overlay.set_state("idle", detail=f"{self.hotkey_label} pour dicter")
         self._load_catalogue(force=True)
         self._on_notice("info", "Réglages enregistrés.")
