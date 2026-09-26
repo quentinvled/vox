@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPalette, QPen, QPixmap
 
 from ..paths import data_dir
 
@@ -45,6 +45,52 @@ PALETTES: dict[str, dict[str, str]] = {
 
 def palette(theme: str) -> dict[str, str]:
     return PALETTES.get(theme, PALETTES["dark"])
+
+
+def build_palette(theme: str) -> QPalette:
+    """Palette Qt explicite pour un theme.
+
+    Indispensable : sans elle, les widgets non couverts par la feuille de style
+    (onglets, listes, boites de dialogue natives...) prennent la palette du
+    systeme. Sur un Windows en mode sombre, cela donnait du texte blanc sur nos
+    fonds clairs — illisible. Une palette explicite fige les couleurs sur
+    toutes les machines.
+    """
+    light = theme == "light"
+    c = palette(theme)
+    window = QColor("#f4f6fa" if light else "#14161b")
+    base = QColor("#ffffff" if light else "#1b1e24")
+    text = QColor(c["text"])
+    muted = QColor(c["muted"])
+    accent = QColor(c["accent"])
+    on_accent = QColor("#ffffff")
+
+    pal = QPalette()
+    pal.setColor(QPalette.Window, window)
+    pal.setColor(QPalette.WindowText, text)
+    pal.setColor(QPalette.Base, base)
+    pal.setColor(QPalette.AlternateBase, window)
+    pal.setColor(QPalette.Text, text)
+    pal.setColor(QPalette.PlaceholderText, muted)
+    pal.setColor(QPalette.Button, window)
+    pal.setColor(QPalette.ButtonText, text)
+    pal.setColor(QPalette.BrightText, on_accent)
+    pal.setColor(QPalette.ToolTipBase, base)
+    pal.setColor(QPalette.ToolTipText, text)
+    pal.setColor(QPalette.Highlight, accent)
+    pal.setColor(QPalette.HighlightedText, on_accent)
+    pal.setColor(QPalette.Link, accent)
+    pal.setColor(QPalette.LinkVisited, accent)
+    for role in (
+        QPalette.WindowText,
+        QPalette.Text,
+        QPalette.ButtonText,
+        QPalette.ToolTipText,
+    ):
+        pal.setColor(QPalette.Disabled, role, muted)
+    pal.setColor(QPalette.Disabled, QPalette.Highlight, QColor(c["border"]))
+    pal.setColor(QPalette.Disabled, QPalette.HighlightedText, muted)
+    return pal
 
 
 def _check_icon_url() -> str:
@@ -223,7 +269,13 @@ def app_qss(theme: str) -> str:
     QScrollBar::handle:vertical {{
         background: {c['border_strong']}; border-radius: 4px; min-height: 30px;
     }}
-    QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+    QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
+    QScrollBar:horizontal {{
+        background: transparent; height: 9px; margin: 2px;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: {c['border_strong']}; border-radius: 4px; min-width: 30px;
+    }}
     QMenu {{
         background: {c['card_alt']};
         border: 1px solid {c['border']};
@@ -233,4 +285,73 @@ def app_qss(theme: str) -> str:
     QMenu::item {{ padding: 6px 22px 6px 12px; border-radius: 7px; }}
     QMenu::item:selected {{ background: {c['accent_soft']}; }}
     QMenu::separator {{ height: 1px; background: {c['border']}; margin: 5px 8px; }}
+
+    /* ---------- Onglets ---------- */
+    QTabWidget::pane {{
+        border: 1px solid {c['border']};
+        border-radius: 12px;
+        top: -1px;
+    }}
+    QTabBar {{ qproperty-drawBase: 0; }}
+    QTabBar::tab {{
+        background: transparent;
+        color: {c['muted']};
+        padding: 7px 14px;
+        margin-right: 4px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+    }}
+    QTabBar::tab:hover {{ color: {c['text']}; }}
+    QTabBar::tab:selected {{
+        background: {c['accent_soft']};
+        color: {c['text']};
+        border-color: {c['border']};
+        font-weight: 600;
+    }}
+
+    /* ---------- Listes et tableaux ---------- */
+    QListWidget, QListView, QTreeView, QTableView {{
+        background: {c['input_bg']};
+        color: {c['text']};
+        border: 1px solid {c['border']};
+        border-radius: 10px;
+        outline: none;
+    }}
+    QListWidget::item, QListView::item, QTreeView::item {{ padding: 6px 8px; border-radius: 7px; }}
+    QListWidget::item:selected, QListView::item:selected, QTreeView::item:selected {{
+        background: {c['accent_soft']};
+        color: {c['text']};
+    }}
+    QHeaderView::section {{
+        background: {c['card_alt']};
+        color: {c['muted']};
+        border: none;
+        padding: 6px 8px;
+    }}
+
+    /* ---------- Dialogues et divers ---------- */
+    QMessageBox {{ background: {c['card_alt']}; }}
+    QMessageBox QLabel {{ color: {c['text']}; }}
+    QProgressBar {{
+        background: {c['input_bg']};
+        border: 1px solid {c['border']};
+        border-radius: 8px;
+        text-align: center;
+        color: {c['text']};
+        min-height: 18px;
+    }}
+    QProgressBar::chunk {{ background: {c['accent']}; border-radius: 7px; }}
+    QToolTip {{
+        background: {c['card_alt']};
+        color: {c['text']};
+        border: 1px solid {c['border']};
+        padding: 4px 6px;
+    }}
+    QSlider::groove:horizontal {{
+        height: 5px; background: {c['input_bg']}; border-radius: 2px;
+    }}
+    QSlider::handle:horizontal {{
+        width: 13px; margin: -5px 0; border-radius: 6px; background: {c['accent']};
+    }}
+    QSplitter::handle {{ background: {c['border']}; }}
     """

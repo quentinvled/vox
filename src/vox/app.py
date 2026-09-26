@@ -23,7 +23,7 @@ from .ui.history_window import RecordingsWindow
 from .ui.overlay import Overlay
 from .ui.settings_window import SettingsWindow
 from .ui.stats_window import StatsWindow
-from .ui.theme import app_qss
+from .ui.theme import app_qss, build_palette
 from .ui.tray import Tray
 from .ui.widgets import make_app_icon
 
@@ -608,6 +608,12 @@ class VoxApp(QObject):
         self._on_notice("info", "Réglages enregistrés.")
 
     def _apply_theme(self) -> None:
+        # Style Fusion : rendu identique sur toutes les machines, et qui
+        # respecte la palette explicite (sinon, sur un Windows en mode sombre,
+        # les widgets non couverts par la feuille de style s'affichaient en
+        # texte blanc sur nos fonds clairs).
+        self.qapp.setStyle("Fusion")
+        self.qapp.setPalette(build_palette(self.settings.theme))
         self.qapp.setStyleSheet(app_qss(self.settings.theme))
         self.overlay.apply_theme(self.settings.theme)
         if self._stats_window is not None:
