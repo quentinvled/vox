@@ -450,11 +450,6 @@ class SettingsWindow(QDialog):
         ui_box = QGroupBox("Interface")
         ui_form = QFormLayout(ui_box)
 
-        self.theme_combo = NoWheelComboBox()
-        self.theme_combo.addItem("Sombre", "dark")
-        self.theme_combo.addItem("Clair", "light")
-        ui_form.addRow("Thème", self.theme_combo)
-
         self.hide_delay_spin = NoWheelSpinBox()
         self.hide_delay_spin.setRange(0, 120)
         self.hide_delay_spin.setSuffix(" s")
@@ -1018,7 +1013,6 @@ class SettingsWindow(QDialog):
         self.device_combo.setCurrentIndex(max(0, index))
         self.max_seconds_spin.setValue(settings.max_record_seconds)
         self.min_seconds_spin.setValue(settings.min_record_seconds)
-        self._select_data(self.theme_combo, settings.theme)
         self.hide_delay_spin.setValue(settings.overlay_hide_delay)
         self.hide_after_check.setChecked(settings.hide_after_listening)
         self.sounds_check.setChecked(settings.sounds)
@@ -1094,7 +1088,7 @@ class SettingsWindow(QDialog):
             input_device=self.device_combo.currentData(),
             max_record_seconds=self.max_seconds_spin.value(),
             min_record_seconds=self.min_seconds_spin.value(),
-            theme=self.theme_combo.currentData(),
+            theme="dark",
             overlay_hide_delay=self.hide_delay_spin.value(),
             hide_after_listening=self.hide_after_check.isChecked(),
             save_recordings=self.save_recordings_check.isChecked(),

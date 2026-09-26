@@ -7,6 +7,10 @@ from PySide6.QtGui import QColor, QPainter, QPalette, QPen, QPixmap
 
 from ..paths import data_dir
 
+# Le theme clair est desactive : il s'affichait mal sur certains systemes
+# (texte systeme illisible selon le mode de l'OS). L'application force « dark ».
+# La palette claire est conservee au cas ou, mais plus aucun selecteur ne la
+# propose et config.Settings la neutralise.
 PALETTES: dict[str, dict[str, str]] = {
     "dark": {
         "card": "rgba(20, 22, 27, 244)",

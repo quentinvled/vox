@@ -136,6 +136,12 @@ class Settings:
     typing_wpm: float = DEFAULT_TYPING_WPM
 
     # ------------------------------------------------------------------
+    def __post_init__(self) -> None:
+        # Le theme clair a ete retire : on reste en sombre, meme si un ancien
+        # settings.json contenait « light ».
+        self.theme = "dark"
+
+    # ------------------------------------------------------------------
     @property
     def effective_key(self) -> str:
         """Cle du fournisseur selectionne."""
