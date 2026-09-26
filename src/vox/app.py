@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
+import shutil
+import subprocess
 import sys
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
@@ -65,6 +69,29 @@ class _UpdateChecker(QThread):
         self.checked.emit(info, reason)
 
 
+class _UpdateDownloader(QThread):
+    """Telecharge le fichier de mise a jour hors du thread d'interface."""
+
+    progress = Signal(int, int)
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, url: str, destination: Path, parent=None) -> None:
+        super().__init__(parent)
+        self._url = url
+        self._destination = destination
+
+    def run(self) -> None:
+        try:
+            path = updates.download(
+                self._url, self._destination, on_progress=self.progress.emit
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.done.emit(path)
+
+
 class VoxApp(QObject):
     """Controleur principal."""
 
@@ -81,6 +108,7 @@ class VoxApp(QObject):
         self._loader: _CatalogueLoader | None = None
         self._update_checker: _UpdateChecker | None = None
         self._update_info: updates.UpdateInfo | None = None
+        self._downloader: _UpdateDownloader | None = None
 
         self.pipeline = Pipeline(self.settings)
         self.hotkey = HotkeyManager(
@@ -500,10 +528,90 @@ class VoxApp(QObject):
         log.info("Mise à jour disponible : %s", info.version)
         self.tray.set_update_available(info.version)
         notes = (info.notes or "").strip()
+        if self.settings.auto_update and info.url:
+            self.tray.showMessage(
+                f"Vox {info.version} : mise à jour en cours",
+                (notes + "\n" if notes else "")
+                + "Téléchargement puis installation automatiques…",
+                QSystemTrayIcon.Information,
+                8000,
+            )
+            self._auto_update(info)
+            return
         self.tray.showMessage(
             f"Vox {info.version} est disponible",
             (notes + "\n" if notes else "")
             + "Clic droit sur l'icône → Mise à jour disponible…",
+            QSystemTrayIcon.Information,
+            12000,
+        )
+
+    # ------------------------------------------------------------------
+    # Mise a jour automatique
+    # ------------------------------------------------------------------
+    def _auto_update(self, info: updates.UpdateInfo) -> None:
+        from .paths import downloads_dir
+
+        destination = downloads_dir() / updates.suggested_filename(info.url)
+        log.info("Mise a jour automatique : %s -> %s", info.url, destination)
+        self._downloader = _UpdateDownloader(info.url, destination, self)
+        self._downloader.progress.connect(self._on_update_progress)
+        self._downloader.done.connect(self._on_update_downloaded)
+        self._downloader.failed.connect(self._on_update_failed)
+        self._downloader.start()
+
+    def _on_update_progress(self, received: int, total: int) -> None:
+        if self._settings_window is not None:
+            self._settings_window.show_auto_progress(received, total)
+
+    def _on_update_failed(self, message: str) -> None:
+        log.warning("Mise a jour automatique impossible : %s", message)
+        self.tray.showMessage(
+            "Mise à jour : échec du téléchargement",
+            f"{message}\nOuvre Réglages → Mises à jour pour réessayer.",
+            QSystemTrayIcon.Warning,
+            12000,
+        )
+
+    def _on_update_downloaded(self, path) -> None:
+        log.info("Mise a jour telechargee : %s", path)
+        if self.pipeline.recording or self.pipeline.busy:
+            # Ne jamais couper une dictee en cours : on repasse plus tard.
+            QTimer.singleShot(4000, lambda: self._on_update_downloaded(path))
+            return
+        self._install_update(Path(path))
+
+    def _install_update(self, path: Path) -> None:
+        """Installe la mise a jour telechargee, puis redemarre Vox."""
+        if sys.platform == "win32":
+            # L'installeur arrete Vox, remplace les fichiers et relance la
+            # nouvelle version : on lui laisse la main et on se ferme.
+            log.info("Lancement de l'installeur : %s", path)
+            subprocess.Popen([str(path), "--silent"], close_fds=True)  # noqa: S603
+            self.quit()
+            return
+
+        appimage = os.environ.get("APPIMAGE", "")
+        target = Path(appimage) if appimage else None
+        if target is not None and target.is_file():
+            # Remplacement atomique : le processus en cours garde l'ancien
+            # fichier monte, la nouvelle version sert au prochain demarrage.
+            tmp = target.with_name(target.name + ".new")
+            try:
+                shutil.copy2(path, tmp)
+                tmp.chmod(0o755)
+                os.replace(tmp, target)
+            except OSError as exc:
+                log.warning("Remplacement de l'AppImage impossible : %s", exc)
+            else:
+                log.info("AppImage remplacee : %s", target)
+                subprocess.Popen([str(target)], close_fds=True)  # noqa: S603
+                self.quit()
+                return
+
+        self.tray.showMessage(
+            "Mise à jour téléchargée",
+            f"Fichier prêt : {path}\nOuvre Réglages → Mises à jour pour l'installer.",
             QSystemTrayIcon.Information,
             12000,
         )

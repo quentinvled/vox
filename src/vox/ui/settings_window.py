@@ -657,6 +657,13 @@ class SettingsWindow(QDialog):
         self.update_check = QCheckBox("Vérifier les mises à jour au démarrage")
         form.addRow("", self.update_check)
 
+        self.auto_update_check = QCheckBox("Installer les mises à jour automatiquement")
+        self.auto_update_check.setToolTip(
+            "Vox télécharge la nouvelle version, l'installe puis redémarre tout seul. "
+            "Décoche pour garder la main (téléchargement manuel ci-dessous)."
+        )
+        form.addRow("", self.auto_update_check)
+
         self.manifest_edit = QLineEdit()
         self.manifest_edit.setPlaceholderText(
             "https://github.com/quentinvled/vox/releases/latest/download/version.json"
@@ -876,6 +883,16 @@ class SettingsWindow(QDialog):
         self._on_update_checked(info, "")
         self.show_updates_tab()
 
+    def show_auto_progress(self, received: int, total: int) -> None:
+        """Reflete la progression d'un telechargement automatique (si ouvert)."""
+        if not self.isVisible():
+            return
+        self.show_updates_tab()
+        self.download_bar.setVisible(True)
+        self.download_button.setEnabled(False)
+        self.download_button.setText("Téléchargement…")
+        self._on_download_progress(received, total)
+
     def _on_update_checked(self, info, reason: str) -> None:
         self.update_now_button.setEnabled(True)
         self._update_info = info
@@ -1007,6 +1024,7 @@ class SettingsWindow(QDialog):
         self.enter_check.setChecked(settings.double_tap_enter)
         self.autostart_check.setChecked(settings.autostart)
         self.update_check.setChecked(settings.check_updates)
+        self.auto_update_check.setChecked(settings.auto_update)
         self.manifest_edit.setText(settings.update_manifest_url)
 
         index = self.device_combo.findData(settings.input_device)
@@ -1084,6 +1102,7 @@ class SettingsWindow(QDialog):
             double_tap_enter=self.enter_check.isChecked(),
             autostart=self.autostart_check.isChecked(),
             check_updates=self.update_check.isChecked(),
+            auto_update=self.auto_update_check.isChecked(),
             update_manifest_url=self.manifest_edit.text().strip(),
             input_device=self.device_combo.currentData(),
             max_record_seconds=self.max_seconds_spin.value(),

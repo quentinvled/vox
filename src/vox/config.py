@@ -125,6 +125,8 @@ class Settings:
 
     # --- Mises a jour ---
     check_updates: bool = True
+    # Telecharge et installe la nouvelle version automatiquement, puis redemarre.
+    auto_update: bool = True
     update_manifest_url: str = DEFAULT_MANIFEST_URL
     show_overlay_on_result: bool = True
 
