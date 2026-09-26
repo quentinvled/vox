@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import recordings
+from .. import __version__, recordings
 from ..config import Settings
 from ..recordings import Recording
 from ..stats import format_money
@@ -56,7 +56,7 @@ class RecordingsWindow(QWidget):
         self._current: Recording | None = None
         self._seeking = False
 
-        self.setWindowTitle("Enregistrements — Vox")
+        self.setWindowTitle(f"Enregistrements — Vox {__version__}")
         self.setMinimumSize(820, 620)
 
         self.player = QMediaPlayer(self)

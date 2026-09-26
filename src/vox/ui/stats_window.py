@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from .. import config as config_module
 from .. import recordings as recordings_module
 from ..api import Client
@@ -95,7 +96,7 @@ class StatsWindow(QWidget):
         self._fetcher: _UsageFetcher | None = None
         self._period = "30"
 
-        self.setWindowTitle("Tableau de bord — Vox")
+        self.setWindowTitle(f"Tableau de bord — Vox {__version__}")
         self.setMinimumSize(920, 720)
         self._build()
         self.refresh()

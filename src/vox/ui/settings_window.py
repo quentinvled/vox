@@ -187,7 +187,7 @@ class SettingsWindow(QDialog):
 
     def __init__(self, settings: Settings, catalogue: Catalogue, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Réglages — Vox")
+        self.setWindowTitle(f"Réglages — Vox {__version__}")
         self.setMinimumSize(680, 620)
         self._settings = settings
         self._catalogue = catalogue
