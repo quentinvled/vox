@@ -31,6 +31,7 @@ def main() -> int:
         "--list-devices",
         "--test-key",
         "--transcribe",
+        "--import",
         "--stats",
         "--uninstall",
         "--where",
@@ -125,6 +126,29 @@ def main_cli() -> int:
     )
     parser.add_argument("--set-manifest-url", metavar="URL", help="enregistre l'URL du manifeste")
     parser.add_argument("--transcribe", metavar="FICHIER_WAV", help="transcrit un fichier WAV")
+    parser.add_argument(
+        "--import",
+        dest="import_file",
+        metavar="FICHIER",
+        help="transcrit et diarise un fichier audio (mp3, m4a, ogg, wav…)",
+    )
+    parser.add_argument(
+        "--import-model",
+        metavar="MODELE",
+        default="",
+        help="force le modele de diarisation (defaut : automatique)",
+    )
+    parser.add_argument(
+        "--import-out",
+        metavar="DOSSIER",
+        default="",
+        help="dossier des resultats (defaut : a cote du fichier source)",
+    )
+    parser.add_argument(
+        "--import-format",
+        default="md,json",
+        help="formats de sortie separes par des virgules : md,txt,srt,vtt,json",
+    )
     parser.add_argument("--version", action="store_true")
     args = parser.parse_args()
 
@@ -270,7 +294,82 @@ def main_cli() -> int:
         )
         return 0
 
+    if args.import_file:
+        return _import_command(args)
+
     parser.print_help()
+    return 0
+
+
+def _import_command(args) -> int:
+    """`vox --import` : transcription + diarisation d'un fichier audio."""
+    import json
+    from pathlib import Path
+
+    from . import config as config_module
+    from .imports import Progress, process_file
+
+    settings = config_module.load()
+    source = Path(args.import_file).expanduser()
+    formats = [item.strip().lower() for item in args.import_format.split(",") if item.strip()]
+    unknown = [item for item in formats if item not in {"md", "txt", "srt", "vtt", "json"}]
+    if unknown:
+        print(f"Format inconnu : {', '.join(unknown)}")
+        return 1
+    if not config_module.key_for("openrouter", settings):
+        print("Aucune clé OpenRouter : les imports avec diarisation passent par OpenRouter.")
+        print("Renseigne-la dans les réglages ou dans .env (OPENROUTER_API_KEY).")
+        return 1
+
+    def on_progress(progress: Progress) -> None:
+        if progress.total:
+            print(f"  {progress.stage:<14} {progress.done}/{progress.total}  {progress.message}")
+        else:
+            print(f"  {progress.stage:<14} {progress.message}")
+
+    print(f"Import : {source}")
+    try:
+        result = process_file(source, settings, model=args.import_model, progress=on_progress)
+    except Exception as exc:
+        print(f"Échec : {exc}")
+        return 1
+
+    transcript = result.transcript
+    target_dir = Path(args.import_out).expanduser() if args.import_out else source.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+    base = target_dir / f"{source.stem}.transcript"
+    writers = {
+        "md": (".md", lambda: transcript.to_markdown()),
+        "txt": (".txt", lambda: transcript.to_text(with_time=True)),
+        "srt": (".srt", transcript.to_srt),
+        "vtt": (".vtt", transcript.to_vtt),
+        "json": (".json", lambda: json.dumps(transcript.to_dict(), ensure_ascii=False, indent=2)),
+    }
+    written: list[str] = []
+    for fmt in formats:
+        extension, build = writers[fmt]
+        path = base.with_suffix(extension)
+        path.write_text(build(), encoding="utf-8")
+        written.append(path.name)
+
+    minutes = transcript.duration / 60.0
+    print(f"\n  Modèle      : {result.model}")
+    print(f"  Stratégie   : {result.strategy.reason}")
+    print(f"  Durée       : {transcript.duration:.1f} s ({minutes:.1f} min)")
+    print(f"  Tranches    : {result.chunks}")
+    print(f"  Locuteurs   : {len(transcript.speakers)}")
+    for index, speaker in enumerate(transcript.speakers, start=1):
+        words = sum(
+            len(segment.text.split())
+            for segment in transcript.segments
+            if segment.speaker == speaker.id
+        )
+        print(f"    {index}. {transcript.label_for(speaker.id):<24} {words:>6} mots")
+    print(f"  Coût        : {transcript.cost:.4f} $")
+    print(f"  Durée réelle: {result.elapsed:.1f} s")
+    for warning in transcript.warnings:
+        print(f"  ! {warning}")
+    print(f"\n  Fichiers : {', '.join(written)} ({target_dir})")
     return 0
 
 

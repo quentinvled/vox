@@ -6,6 +6,7 @@ description = "Dictee vocale globale : transcription Whisper + reformulation LLM
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
+    "imageio-ffmpeg>=0.6.0",
     "keyboard>=0.13.5; sys_platform == 'win32'",
     "numpy>=2.5.3",
     "pyside6>=6.11.2",
@@ -25,6 +26,10 @@ path = "src/vox/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vox"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 110
@@ -49,8 +54,14 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 # L'historique est un journal local : l'heure locale naive est volontaire.
 "src/vox/pipeline.py" = ["DTZ005"]
 "src/vox/recordings.py" = ["DTZ005"]
+# Les commandes ffmpeg sont passees en liste d'arguments, sans shell, avec un
+# chemin resolu par imageio-ffmpeg (voir audiofiles.py).
+"src/vox/audiofiles.py" = ["S603", "S607"]
+# Dans les tests, `assert` est l'outil de verification normal.
+"tests/*.py" = ["S101"]
 
 [dependency-groups]
 dev = [
     "pyinstaller>=6.22.3",
+    "pytest>=8.0",
 ]

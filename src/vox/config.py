@@ -25,6 +25,11 @@ DEFAULT_STT_MODEL = "microsoft/mai-transcribe-2"
 QUALITY_STT_MODEL = "google/gemini-3.5-transcribe"
 DEFAULT_CHAT_MODEL = "google/gemini-2.5-flash"
 
+# Modele utilise pour les imports a diariser : multilingue, classe premier sur
+# FLEURS, diarisation Azure et 0,10 $/h. Alternatives mesurees dans
+# docs/modeles-diarisation.md (x-ai/grok-stt-1.0, google/gemini-3.5-transcribe).
+DEFAULT_DIARIZATION_MODEL = "microsoft/mai-transcribe-2"
+
 # Modeles par defaut quand le fournisseur n'a pas la nomenclature OpenRouter.
 DEFAULT_STT_MODEL_GROQ = "whisper-large-v3-turbo"
 DEFAULT_CHAT_MODEL_GROQ = "llama-3.3-70b-versatile"
@@ -123,6 +128,14 @@ class Settings:
     notify_on_start: bool = True
     show_in_taskbar: bool = False
 
+    # --- Import de fichiers (diarisation) ---
+    # "" = modele automatique (voir DEFAULT_DIARIZATION_MODEL).
+    diarization_model: str = ""
+    # Duree visee des tranches envoyees a l'API (secondes).
+    import_chunk_seconds: int = 600
+    # Nombre de tranches transcrites en parallele.
+    import_parallel: int = 3
+
     # --- Mises a jour ---
     check_updates: bool = True
     # Telecharge et installe la nouvelle version automatiquement, puis redemarre.
@@ -176,6 +189,15 @@ def _load_dotenv_key(variable: str) -> str | None:
 def resolve_api_key(settings: Settings | None = None) -> str:
     """Resolution en cascade : env, .env, puis champ de settings.json."""
     provider = settings.provider if settings else "openrouter"
+    return key_for(provider, settings)
+
+
+def key_for(provider: str, settings: Settings | None = None) -> str:
+    """Comme `resolve_api_key`, mais pour un fournisseur explicite.
+
+    L'import de fichiers passe toujours par OpenRouter (diarisation), meme si
+    le fournisseur de dictee est Groq ou OpenAI.
+    """
     variable = ENV_KEYS.get(provider, "OPENROUTER_API_KEY")
     field_name = KEY_FIELDS.get(provider, "api_key")
 

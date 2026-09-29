@@ -39,6 +39,46 @@ PROMPT_AWARE_PROVIDERS = (
     "azure",
 )
 
+# Diarisation : la fonctionnalite est propre a chaque fournisseur et se passe
+# sous `provider.options.<slug>`. OpenRouter ne transmet que l'option du
+# fournisseur reellement retenu ; les autres sont ignorees en silence.
+# Voir docs/modeles-diarisation.md — l'option est a verifier apres chaque
+# changement de version du fournisseur.
+DIARIZATION_PROVIDERS: dict[str, tuple[str, dict]] = {
+    "x-ai/grok-stt-1.0": ("xai", {"diarize": True}),
+    "microsoft/mai-transcribe-2": ("azure", {"diarization": {"enabled": True}}),
+    "deepgram/nova-3": ("deepgram", {"diarize": True, "punctuate": True, "smart_format": True}),
+    "assemblyai/universal-3-5-pro": ("assemblyai", {"speaker_labels": True}),
+    "google/gemini-3.5-transcribe": ("google-ai-studio", {"diarization": {"enabled": True}}),
+    "fish-audio/transcribe-1-pro": ("fish-audio", {}),
+    "meta/muse-voice-transcribe-1.0": ("meta", {}),
+}
+
+
+def _diarization_entry(model: str) -> tuple[str, dict] | None:
+    model = (model or "").strip()
+    if model in DIARIZATION_PROVIDERS:
+        return DIARIZATION_PROVIDERS[model]
+    for known, entry in DIARIZATION_PROVIDERS.items():
+        if model.startswith(known.split(":", 1)[0] + ":"):
+            return entry
+    return None
+
+
+def diarization_options(model: str) -> dict:
+    """Options `provider.options` activant la diarisation, sinon {}."""
+    entry = _diarization_entry(model)
+    if not entry:
+        return {}
+    tag, options = entry
+    if not options:
+        return {}  # diarisation par defaut du modele, rien a demander
+    return {tag: dict(options)}
+
+
+def supports_diarization(model: str) -> bool:
+    return _diarization_entry(model) is not None
+
 # Tarifs Groq indicatifs ($/h d'audio), utilises pour l'affichage.
 GROQ_STT_PRICING = {
     "whisper-large-v3": 0.111,
@@ -222,17 +262,38 @@ class Client:
         language: str | None = None,
         vocabulary: str | None = None,
         temperature: float = 0.0,
+        audio_format: str = "wav",
+        response_format: str | None = None,
+        timestamp_granularities: list[str] | None = None,
+        provider_options: dict | None = None,
     ) -> Transcript:
         self._check_key()
         started = time.perf_counter()
 
         if self.provider.style == "openrouter":
             response = self._transcribe_openrouter(
-                self._http, wav_bytes, model, language, vocabulary, temperature
+                self._http,
+                wav_bytes,
+                model,
+                language,
+                vocabulary,
+                temperature,
+                audio_format=audio_format,
+                response_format=response_format,
+                timestamp_granularities=timestamp_granularities,
+                provider_options=provider_options,
             )
         else:
             response = self._transcribe_openai(
-                self._http, wav_bytes, model, language, vocabulary, temperature
+                self._http,
+                wav_bytes,
+                model,
+                language,
+                vocabulary,
+                temperature,
+                audio_format=audio_format,
+                response_format=response_format,
+                timestamp_granularities=timestamp_granularities,
             )
 
         latency = int((time.perf_counter() - started) * 1000)
@@ -262,22 +323,38 @@ class Client:
         language: str | None,
         vocabulary: str | None,
         temperature: float,
+        *,
+        audio_format: str = "wav",
+        response_format: str | None = None,
+        timestamp_granularities: list[str] | None = None,
+        provider_options: dict | None = None,
     ) -> httpx.Response:
         payload: dict = {
             "model": model,
             "input_audio": {
                 "data": base64.b64encode(wav_bytes).decode("ascii"),
-                "format": "wav",
+                "format": audio_format,
             },
         }
         if language:
             payload["language"] = language
         if temperature is not None:
             payload["temperature"] = temperature
+        if response_format:
+            payload["response_format"] = response_format
+        if timestamp_granularities:
+            payload["timestamp_granularities"] = timestamp_granularities
+
+        options: dict[str, dict] = {}
         if vocabulary and vocabulary.strip():
-            payload["provider"] = {
-                "options": {name: {"prompt": vocabulary.strip()} for name in PROMPT_AWARE_PROVIDERS}
-            }
+            prompt = vocabulary.strip()
+            options.update({name: {"prompt": prompt} for name in PROMPT_AWARE_PROVIDERS})
+        if provider_options:
+            for tag, values in provider_options.items():
+                options.setdefault(tag, {}).update(values)
+        if options:
+            payload["provider"] = {"options": options}
+
         return client.post(
             f"{self.base_url}/audio/transcriptions",
             headers={**self._headers, "Content-Type": "application/json"},
@@ -292,19 +369,42 @@ class Client:
         language: str | None,
         vocabulary: str | None,
         temperature: float,
+        *,
+        audio_format: str = "wav",
+        response_format: str | None = None,
+        timestamp_granularities: list[str] | None = None,
     ) -> httpx.Response:
-        data: dict[str, str] = {"model": model, "response_format": "json"}
+        data: dict[str, str] = {"model": model, "response_format": response_format or "json"}
         if language:
             data["language"] = language
         if vocabulary and vocabulary.strip():
             data["prompt"] = vocabulary.strip()
         if temperature is not None:
             data["temperature"] = str(temperature)
+        media_types = {
+            "wav": "audio/wav",
+            "mp3": "audio/mpeg",
+            "flac": "audio/flac",
+            "ogg": "audio/ogg",
+            "opus": "audio/opus",
+            "m4a": "audio/mp4",
+            "webm": "audio/webm",
+            "aac": "audio/aac",
+        }
+        files = {
+            "file": (
+                f"audio.{audio_format}",
+                wav_bytes,
+                media_types.get(audio_format, "application/octet-stream"),
+            )
+        }
+        if timestamp_granularities:
+            data["timestamp_granularities[]"] = timestamp_granularities
         return client.post(
             f"{self.base_url}/audio/transcriptions",
             headers=self._headers,
             data=data,
-            files={"file": ("audio.wav", wav_bytes, "audio/wav")},
+            files=files,
         )
 
     # ------------------------------------------------------------------

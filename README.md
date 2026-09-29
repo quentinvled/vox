@@ -102,6 +102,9 @@ uv sync
 uv run vox                 # lance l'application
 uv run vox --list-devices  # liste les micros
 uv run vox --stats         # statistiques en ligne de commande
+uv run vox --import appel.m4a                     # transcription + diarisation
+uv run vox --import appel.m4a --import-model x-ai/grok-stt-1.0
+uv run pytest              # tests
 ```
 
 Construire les paquets :
@@ -116,3 +119,13 @@ Publier une version (voir [`RELEASING.md`](RELEASING.md)) :
 ```bash
 uv run python tools/release.py 0.2.0
 ```
+
+## Conception et suivi
+
+- [`docs/roadmap.md`](docs/roadmap.md) — feuille de route et suivi de
+  l'avancement (lot en cours, prochains tests).
+- [`docs/assistant-audio.md`](docs/assistant-audio.md) — Vox comme assistant
+  audio global : enregistrement micro/système, détection d'appels, bibliothèque,
+  transcription live, agent.
+- [`docs/modeles-diarisation.md`](docs/modeles-diarisation.md) — diarisation :
+  modèles OpenRouter, options par fournisseur, limites et coûts.
