@@ -86,6 +86,7 @@ def test_import_detail_shows_segments_and_renames(qapp, tmp_path: Path) -> None:
         assert window.segments_list.count() == 2
         assert window.names_button.isEnabled()
         assert window.export_button.isEnabled()
+        assert window.file_button.isEnabled()
 
         stored = library.load_transcript(entry.id)
         assert stored is not None

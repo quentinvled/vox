@@ -118,16 +118,18 @@ class _ImportWorker(QThread):
         self._paths = list(paths)
         self._settings = settings
         self._replace_id = replace_id
+        self._file_position = 0
         self.cancel = threading.Event()
 
     def stop(self) -> None:
         self.cancel.set()
 
     def run(self) -> None:
-        for path in self._paths:
+        for position, path in enumerate(self._paths, start=1):
             if self.cancel.is_set():
                 self.cancelled.emit()
                 return
+            self._file_position = position
             try:
                 result = process_file(
                     path,
@@ -155,7 +157,11 @@ class _ImportWorker(QThread):
                 self.imported.emit(entry.id)
 
     def _on_progress(self, progress: Progress) -> None:
-        self.progress.emit(progress.done, progress.total, progress.message)
+        message = progress.message
+        if len(self._paths) > 1:
+            name = Path(self._paths[self._file_position - 1]).name
+            message = f"[{self._file_position}/{len(self._paths)}] {name} — {message}"
+        self.progress.emit(progress.done, progress.total, message)
 
 
 class _NamesWorker(QThread):

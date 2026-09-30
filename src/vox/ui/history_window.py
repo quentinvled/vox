@@ -364,6 +364,11 @@ class RecordingsWindow(QWidget):
         self.export_button.setMenu(export_menu)
         actions.addWidget(self.export_button)
 
+        self.file_button = QPushButton("Fichier")
+        self.file_button.setToolTip("Ouvrir le dossier du fichier d'origine")
+        self.file_button.clicked.connect(self._open_source)
+        actions.addWidget(self.file_button)
+
         self.names_button = QPushButton("Proposer les prénoms")
         self.names_button.setToolTip(
             "Demander à un modèle de retrouver qui parle d'après la conversation"
@@ -510,8 +515,8 @@ class RecordingsWindow(QWidget):
                 text = self._import_row(entry)  # type: ignore[arg-type]
                 key = entry.id
                 haystack = (
-                    f"{entry.label} {entry.source} {' '.join(entry.speakers)} "  # type: ignore[union-attr]
-                    f"{entry.at}"
+                    f"{entry.label} {entry.source} {' '.join(entry.speakers)} "
+                    f"{entry.extras.get('apercu', '')} {entry.at}"  # type: ignore[union-attr]
                 ).lower()
                 tooltip = f"{entry.label}\n{entry.source}"  # type: ignore[union-attr]
             item = QListWidgetItem(text)
@@ -711,6 +716,7 @@ class RecordingsWindow(QWidget):
             for widget in (
                 self.copy_import_button,
                 self.export_button,
+                self.file_button,
                 self.names_button,
                 self.retranscribe_import_button,
                 self.delete_import_button,
@@ -731,6 +737,7 @@ class RecordingsWindow(QWidget):
         has_transcript = self._transcript is not None
         self.copy_import_button.setEnabled(has_transcript)
         self.export_button.setEnabled(has_transcript)
+        self.file_button.setEnabled(bool(entry.source))
         self.names_button.setEnabled(has_transcript and entry.status != "erreur")
         self.retranscribe_import_button.setEnabled(entry.exists)
         self.delete_import_button.setEnabled(True)
@@ -1049,6 +1056,18 @@ class RecordingsWindow(QWidget):
             self.import_notice.setText(f"Export impossible : {exc}")
             return
         self.import_notice.setText(f"Exporté : {Path(target).name}")
+
+    def _open_source(self) -> None:
+        entry = self._current_import
+        if entry is None or not entry.source:
+            return
+        folder = entry.path.parent
+        if not folder.exists():
+            self.import_notice.setText(
+                "Dossier introuvable : le fichier a peut-être été déplacé."
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _open_folder(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(recordings.audio_path("").parent)))

@@ -54,6 +54,7 @@ def test_add_stores_index_and_transcript(tmp_path: Path) -> None:
     assert entry.speakers_label() == "2 locuteurs"
     assert entry.cost == pytest.approx(0.012)
     assert entry.extras["duree_traitement"] == 12.5
+    assert entry.extras["apercu"].startswith("Bonjour à tous.")
 
     loaded = library.load()
     assert [item.id for item in loaded] == [entry.id]

@@ -37,6 +37,12 @@ def _count_words(transcript: Transcript) -> int:
     return sum(len(segment.text.split()) for segment in transcript.segments)
 
 
+def _preview(transcript: Transcript) -> str:
+    """Début du transcript, pour la recherche dans la bibliothèque."""
+    text = " ".join(segment.text for segment in transcript.segments[:4])
+    return " ".join(text.split())[:180]
+
+
 @dataclass
 class ImportEntry:
     """Un fichier importe, son transcript et son etat."""
@@ -189,7 +195,7 @@ def load_transcript(entry_id: str) -> Transcript | None:
 
 
 def _from_transcript(entry_id: str, transcript: Transcript) -> ImportEntry:
-    return ImportEntry(
+    entry = ImportEntry(
         id=entry_id,
         title=transcript.title or Path(transcript.source).stem,
         seconds=transcript.duration,
@@ -199,6 +205,10 @@ def _from_transcript(entry_id: str, transcript: Transcript) -> ImportEntry:
         speakers=transcript.speaker_labels(),
         language=transcript.language,
     )
+    preview = _preview(transcript)
+    if preview:
+        entry.extras["apercu"] = preview
+    return entry
 
 
 def add(
