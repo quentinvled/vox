@@ -21,6 +21,7 @@ from pathlib import Path
 from . import audiofiles, routing
 from .api import ApiError, Client, diarization_options
 from .config import DEFAULT_DIARIZATION_MODEL, Settings, key_for
+from .speakers import merge_speakers_with_llm
 from .transcript import ChunkResult, Transcript, assemble, segments_from_payload
 
 log = logging.getLogger("vox")
@@ -70,6 +71,8 @@ def process_file(
     workdir: Path | str | None = None,
     max_workers: int | None = None,
     limit_seconds: float | None = None,
+    codec: str = "",
+    expected_speakers: int | None = None,
 ) -> ImportResult:
     """Transcrit et diarise un fichier, en s'adaptant a ce qu'il contient.
 
@@ -88,9 +91,18 @@ def process_file(
 
     notify(Progress("analyse", 0, 0, "Analyse du fichier…"))
     info = audiofiles.probe(source)
-    correlation = audiofiles.channel_correlation(source, info.duration) if info.stereo else None
-    strategy = routing.analyse(info, correlation)
+    profile = (
+        audiofiles.channel_profile(source, info.duration) if info.stereo else None
+    )
+    strategy = routing.analyse(
+        info,
+        profile.correlation if profile else None,
+        profile.co_activity if profile else None,
+    )
     resolved_model = (model or settings.diarization_model or DEFAULT_DIARIZATION_MODEL).strip()
+    limits = routing.limits_for(resolved_model)
+    if not codec:
+        codec = limits.codec
 
     effective = info.duration
     if limit_seconds and limit_seconds > 0:
@@ -99,7 +111,7 @@ def process_file(
     check_cancel()
     notify(Progress("silences", 0, 0, "Repérage des silences…"))
     silences = audiofiles.detect_silences(source, limit=effective)
-    chunk_seconds = float(settings.import_chunk_seconds or routing.DEFAULT_CHUNK_SECONDS)
+    chunk_seconds = float(settings.import_chunk_seconds or limits.chunk_seconds)
     chunks = audiofiles.plan_chunks(effective, silences, target=chunk_seconds)
 
     tasks = [(index, chunk) for index in range(len(strategy.tracks)) for chunk in chunks]
@@ -134,7 +146,7 @@ def process_file(
             track_label=track.label,
             fixed_speaker=not track.diarize,
         )
-        audio_format = FORMAT_FALLBACK[0]
+        audio_format = codec or FORMAT_FALLBACK[0]
         target = folder / f"piste{track_index}-tranche{chunk.index}.{audio_format}"
         audiofiles.extract(
             source,
@@ -244,6 +256,28 @@ def process_file(
     )
     if effective < info.duration:
         transcript.extras["limite_secondes"] = round(effective, 1)
+
+    # Raccord final des locuteurs entre tranches (passe LLM, non bloquante).
+    if (
+        settings.import_merge_speakers
+        and len(chunks) > 1
+        and len(transcript.speakers) > 1
+    ):
+        notify(Progress("locuteurs", total, total, "Raccord des locuteurs…"))
+        try:
+            with Client("openrouter", key_for("openrouter", settings), timeout=180.0) as chat_client:
+                merged = merge_speakers_with_llm(
+                    transcript,
+                    chat_client,
+                    settings.chat_model,
+                    expected=expected_speakers,
+                )
+            if merged:
+                transcript.extras["locuteurs_fusionnes"] = len(merged)
+        except Exception as exc:  # jamais bloquant : on garde les etiquettes telles quelles
+            log.warning("Raccord des locuteurs ignore : %s", exc)
+            transcript.warnings.append(f"Raccord des locuteurs ignoré : {exc}")
+
     notify(Progress("termine", total, total, "Terminé"))
     return ImportResult(
         transcript=transcript,

@@ -156,6 +156,19 @@ def main_cli() -> int:
         metavar="MINUTES",
         help="ne traiter que les N premieres minutes (essai avant l'heure entiere)",
     )
+    parser.add_argument(
+        "--import-codec",
+        default="",
+        choices=["", "flac", "mp3", "wav"],
+        help="conteneur envoye a l'API (defaut : flac, ou mp3 pour les gros fichiers)",
+    )
+    parser.add_argument(
+        "--import-speakers",
+        type=int,
+        default=0,
+        metavar="N",
+        help="nombre de personnes dans la conversation (aide le raccord des locuteurs)",
+    )
     parser.add_argument("--version", action="store_true")
     args = parser.parse_args()
 
@@ -344,6 +357,8 @@ def _import_command(args) -> int:
             model=args.import_model,
             progress=on_progress,
             limit_seconds=args.import_limit * 60.0 if args.import_limit else None,
+            codec=args.import_codec,
+            expected_speakers=args.import_speakers or None,
         )
     except Exception as exc:
         print(f"Échec : {exc}")

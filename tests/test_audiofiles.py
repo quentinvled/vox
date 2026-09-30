@@ -125,6 +125,33 @@ def test_correlation_detects_distinct_channels(tmp_path: Path) -> None:
 
 
 @needs_ffmpeg
+def test_channel_profile_flags_mixed_down_stereo(tmp_path: Path) -> None:
+    # Un appel mono « mixe en stereo » : un canal est une copie attenuee et
+    # legerement decalee de l'autre (mixage classique des telephones).
+    left = _tone(3.0)
+    right = 0.7 * np.roll(left, 16)
+    path = _write_wav(tmp_path / "mix.wav", np.column_stack([left, right]).ravel(), channels=2)
+    profile = audiofiles.channel_profile(path, 3.0)
+    assert profile.correlation is not None
+    assert profile.correlation >= audiofiles.SAME_AUDIO_CORRELATION
+    assert profile.co_activity is not None
+    assert profile.co_activity >= audiofiles.SAME_AUDIO_CO_ACTIVITY
+
+
+@needs_ffmpeg
+def test_channel_profile_detects_alternating_speakers(tmp_path: Path) -> None:
+    # Deux vrais interlocuteurs : chacun parle quand l'autre se tait.
+    left = np.concatenate([_tone(1.5), _silence(1.5)])
+    right = np.concatenate([_silence(1.5), _tone(1.5, 330.0)])
+    path = _write_wav(tmp_path / "duo.wav", np.column_stack([left, right]).ravel(), channels=2)
+    profile = audiofiles.channel_profile(path, 3.0)
+    assert profile.co_activity is not None
+    assert profile.co_activity < audiofiles.SAME_AUDIO_CO_ACTIVITY
+    assert profile.exclusive is not None
+    assert profile.exclusive > 0.5
+
+
+@needs_ffmpeg
 def test_detect_silences(tmp_path: Path) -> None:
     samples = np.concatenate([_tone(1.0), _silence(2.0), _tone(1.0)])
     path = _write_wav(tmp_path / "silences.wav", samples)

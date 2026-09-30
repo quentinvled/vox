@@ -36,11 +36,25 @@ def test_unknown_correlation_falls_back_to_mono() -> None:
 
 
 def test_distinct_channels_give_two_tracks() -> None:
-    strategy = analyse(STEREO, correlation=0.2)
+    strategy = analyse(STEREO, correlation=0.2, co_activity=0.2)
     assert strategy.kind == "canaux"
     assert [track.channel for track in strategy.tracks] == [0, 1]
     assert all(not track.diarize for track in strategy.tracks)
     assert [track.label for track in strategy.tracks] == ["Canal gauche", "Canal droit"]
+
+
+def test_same_audio_on_both_channels_is_mono() -> None:
+    # Cas reel : un appel mono mixe en stereo. Correlation moderee (0,8) mais
+    # les deux canaux parlent en meme temps : c'est le meme son.
+    strategy = analyse(STEREO, correlation=0.8, co_activity=0.95)
+    assert strategy.kind == "mono"
+    assert "Même son" in strategy.reason
+
+
+def test_two_tracks_need_both_criteria() -> None:
+    # Canaux qui se ressemblent mais ne parlent pas ensemble : deux voix.
+    strategy = analyse(STEREO, correlation=0.8, co_activity=0.2)
+    assert strategy.kind == "canaux"
 
 
 def test_custom_track_labels() -> None:

@@ -131,10 +131,12 @@ class Settings:
     # --- Import de fichiers (diarisation) ---
     # "" = modele automatique (voir DEFAULT_DIARIZATION_MODEL).
     diarization_model: str = ""
-    # Duree visee des tranches envoyees a l'API (secondes).
-    import_chunk_seconds: int = 600
+    # Duree visee des tranches envoyees a l'API (0 = selon le modele).
+    import_chunk_seconds: int = 0
     # Nombre de tranches transcrites en parallele.
     import_parallel: int = 3
+    # Raccord final des locuteurs entre tranches (passe LLM, quelques centimes).
+    import_merge_speakers: bool = True
 
     # --- Mises a jour ---
     check_updates: bool = True

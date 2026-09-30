@@ -10,7 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .audiofiles import DUPLICATE_CORRELATION, AudioInfo
+from .audiofiles import (
+    DUPLICATE_CORRELATION,
+    SAME_AUDIO_CO_ACTIVITY,
+    SAME_AUDIO_CORRELATION,
+    AudioInfo,
+)
 
 # Plafond de locuteurs : large, il evite le sur-decoupage sans interdire les
 # grosses reunions. Les fournisseurs actuels ne l'exposent pas tous, il sert
@@ -21,6 +26,36 @@ CALL_MAX_SPEAKERS = 2
 # Duree visee des tranches : courte devant les timeouts amont (~60 s) et les
 # plafonds de diarisation (30-32 min), longue pour laisser du contexte.
 DEFAULT_CHUNK_SECONDS = 600.0
+
+
+@dataclass(frozen=True)
+class ModelLimits:
+    """Contraintes reelles d'un modele, mesurees sur de vrais fichiers."""
+
+    chunk_seconds: float
+    codec: str
+
+
+# Limites mesurees le 30/09/2026 sur un appel de 97 min (OpenRouter) :
+#   * mai-transcribe-2 refuse les entrees trop lourdes (~7-8 Mo) avec un 400
+#     « does not support large audio inputs ». En flac (16 kHz mono), cela
+#     plafonne vers 7 min ; en mp3 96 kb/s, 14 min passent encore.
+#   * gemini-3.5-transcribe plafonne a 30 min avec diarisation (documentation).
+MODEL_LIMITS: dict[str, ModelLimits] = {
+    "microsoft/mai-transcribe-2": ModelLimits(chunk_seconds=720.0, codec="mp3"),
+    "google/gemini-3.5-transcribe": ModelLimits(chunk_seconds=1500.0, codec="mp3"),
+}
+
+
+def limits_for(model: str) -> ModelLimits:
+    """Limites du modele, ou valeurs par defaut raisonnables."""
+    model = (model or "").strip()
+    if model in MODEL_LIMITS:
+        return MODEL_LIMITS[model]
+    for known, limits in MODEL_LIMITS.items():
+        if model.startswith(known.split(":", 1)[0] + ":"):
+            return limits
+    return ModelLimits(chunk_seconds=DEFAULT_CHUNK_SECONDS, codec="flac")
 
 
 @dataclass(frozen=True)
@@ -46,6 +81,7 @@ class Strategy:
 def analyse(
     info: AudioInfo,
     correlation: float | None = None,
+    co_activity: float | None = None,
     *,
     is_call: bool = False,
     labels: tuple[str, str] | None = None,
@@ -53,10 +89,11 @@ def analyse(
 ) -> Strategy:
     """Construit la strategie a partir du profil du fichier.
 
-    `correlation` est le resultat de `channel_correlation()` : proche de 1.0,
-    les canaux sont identiques (son mono duplique) et le fichier est traite
-    comme du mono. `is_call` / `labels` viennent du contexte (enregistrement
-    fait par Vox, detection d'appel) et servent uniquement a nommer les pistes.
+    `correlation` et `co_activity` viennent de `audiofiles.channel_profile()` :
+    des canaux qui se ressemblent *et* qui parlent en meme temps portent le meme
+    son (appel mono mixe en stereo) et doivent etre diarises ensemble, sinon on
+    obtiendrait la meme conversation deux fois. `is_call` / `labels` viennent du
+    contexte (enregistrement Vox, detection d'appel) et nomment les pistes.
     """
     cap = max_speakers if max_speakers and max_speakers > 0 else (
         CALL_MAX_SPEAKERS if is_call else DEFAULT_MAX_SPEAKERS
@@ -68,18 +105,30 @@ def analyse(
             reason="Fichier mono : diarisation automatique des locuteurs.",
             tracks=(Track(channel=None, label="Locuteur", diarize=True, max_speakers=cap),),
         )
-    # Canaux identiques (son mono duplique) ou profil indecis : le mix mono
-    # reste le choix sur — traiter deux canaux identiques comme deux pistes
-    # donnerait la meme conversation deux fois.
-    if correlation is None or correlation >= DUPLICATE_CORRELATION:
+    # Canaux identiques (son mono duplique) ou presque : le mix mono reste le
+    # choix sur.
+    duplicated = correlation is not None and correlation >= DUPLICATE_CORRELATION
+    same_audio = (
+        correlation is not None
+        and correlation >= SAME_AUDIO_CORRELATION
+        and co_activity is not None
+        and co_activity >= SAME_AUDIO_CO_ACTIVITY
+    )
+    if duplicated or same_audio:
         reason = (
             "Canaux identiques (son mono dupliqué) : diarisation automatique."
-            if correlation is not None
-            else "Profil des canaux indécis : diarisation automatique du mix mono."
+            if duplicated
+            else "Même son sur les deux canaux : diarisation automatique."
         )
         return Strategy(
             kind="mono",
             reason=reason,
+            tracks=(Track(channel=None, label="Locuteur", diarize=True, max_speakers=cap),),
+        )
+    if correlation is None:
+        return Strategy(
+            kind="mono",
+            reason="Profil des canaux indécis : diarisation automatique du mix mono.",
             tracks=(Track(channel=None, label="Locuteur", diarize=True, max_speakers=cap),),
         )
 
@@ -101,7 +150,10 @@ __all__ = [
     "CALL_MAX_SPEAKERS",
     "DEFAULT_CHUNK_SECONDS",
     "DEFAULT_MAX_SPEAKERS",
+    "MODEL_LIMITS",
+    "ModelLimits",
     "Strategy",
     "Track",
     "analyse",
+    "limits_for",
 ]

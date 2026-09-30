@@ -23,6 +23,14 @@ import numpy as np
 CORRELATION_WINDOW = 20.0
 # Au-dela, les canaux sont consideres comme le meme signal (son mono duplique).
 DUPLICATE_CORRELATION = 0.98
+# Deux canaux qui « parlent » en meme temps presque tout le temps et qui se
+# ressemblent ne sont pas deux voix separees : c'est le meme son (mixage stereo
+# d'un appel mono, micros d'une meme piece...). Mesure sur un vrai enregistrement
+# d'appel : correlation 0,66-0,94 et co-activite 0,91-0,95 -> mono.
+SAME_AUDIO_CORRELATION = 0.6
+SAME_AUDIO_CO_ACTIVITY = 0.75
+# Taille des trames d'activite (secondes).
+ACTIVITY_FRAME = 0.02
 # Silence detectable : en dessous de -35 dBFS pendant au moins 0,5 s.
 SILENCE_DB = -35
 SILENCE_MIN_SECONDS = 0.5
@@ -54,6 +62,22 @@ class AudioInfo:
     @property
     def stereo(self) -> bool:
         return self.channels >= 2
+
+
+@dataclass(frozen=True)
+class ChannelProfile:
+    """Ressemblance des deux canaux d'un fichier stereo.
+
+    `correlation` : correlation au meilleur decalage (~1.0 = meme signal).
+    `co_activity` : part du temps vocal ou les deux canaux sont actifs ensemble.
+    `exclusive` : part du temps vocal ou un seul canal est actif (deux vrais
+    interlocuteurs separees ont une exclusivite elevee, un mixage mono non).
+    """
+
+    correlation: float | None
+    co_activity: float | None
+    exclusive: float | None
+    windows: int = 0
 
 
 @dataclass(frozen=True)
@@ -168,34 +192,87 @@ def _pcm_pair(path: Path | str, start: float, seconds: float) -> tuple[np.ndarra
     return data[0::2], data[1::2]
 
 
+def _best_lag_correlation(left: np.ndarray, right: np.ndarray, rate: int) -> float | None:
+    """Correlation maximale sur un petit decalage (+-10 ms)."""
+    span = max(1, int(0.010 * rate))
+    size = min(len(left), len(right))
+    if size < rate // 4:
+        return None
+    left, right = left[:size], right[:size]
+    best: float | None = None
+    for lag in range(-span, span + 1):
+        a = left[max(0, lag) : size + min(0, lag)]
+        b = right[max(0, -lag) : size + min(0, -lag)]
+        if len(a) < rate // 4 or a.std() < 1e-6 or b.std() < 1e-6:
+            continue
+        value = float(np.corrcoef(a, b)[0, 1])
+        if np.isfinite(value) and (best is None or value > best):
+            best = value
+    return best
+
+
+def channel_profile(path: Path | str, duration: float, *, windows: int = 3) -> ChannelProfile:
+    """Profil des deux canaux : ressemblance et activite simultanee.
+
+    Renvoie un profil vide (tout a None) si le fichier est trop silencieux ou
+    trop court pour juger : l'appelant retombe alors sur un traitement mono.
+    """
+    length = min(CORRELATION_WINDOW, max(duration, 1.0))
+    span = max(0.0, duration - length)
+    starts = np.linspace(0.0, span, num=windows) if span > 0.5 else [0.0]
+    correlations: list[float] = []
+    both = only_left = only_right = union = 0.0
+    used = 0
+
+    for start in starts:
+        pair = _pcm_pair(path, float(start), length)
+        if pair is None:
+            continue
+        left, right = pair
+        size = (min(len(left), len(right)) // int(ACTIVITY_FRAME * 8000)) * int(ACTIVITY_FRAME * 8000)
+        if size <= 0:
+            continue
+        frame = int(ACTIVITY_FRAME * 8000)
+        left_frames = np.sqrt((left[:size] ** 2).reshape(-1, frame).mean(axis=1))
+        right_frames = np.sqrt((right[:size] ** 2).reshape(-1, frame).mean(axis=1))
+        all_frames = np.concatenate([left_frames, right_frames])
+        floor = float(np.percentile(all_frames, 10))
+        peak = float(np.percentile(all_frames, 95))
+        # Seuil d'activite : le plancher de bruit multiplie par 3, borne par le
+        # niveau du signal (un son continu n'a pas de plancher de bruit).
+        threshold = max(30.0, min(floor * 3.0, peak * 0.5), peak * 0.1)
+        left_active = left_frames > threshold
+        right_active = right_frames > threshold
+        union += float((left_active | right_active).sum())
+        both += float((left_active & right_active).sum())
+        only_left += float((left_active & ~right_active).sum())
+        only_right += float((right_active & ~left_active).sum())
+        mask = np.repeat(left_active | right_active, frame)
+        if mask.sum() > 8000:
+            value = _best_lag_correlation(left[:size][mask], right[:size][mask], 8000)
+            if value is not None:
+                correlations.append(value)
+        used += 1
+
+    if not used or union <= 0:
+        return ChannelProfile(None, None, None, used)
+    correlation = float(np.median(correlations)) if correlations else None
+    co_activity = both / union
+    return ChannelProfile(
+        correlation=correlation,
+        co_activity=co_activity,
+        exclusive=1.0 - co_activity,
+        windows=used,
+    )
+
+
 def channel_correlation(path: Path | str, duration: float, *, windows: int = 3) -> float | None:
     """Correlation entre canaux : ~1.0 si les deux canaux sont identiques.
 
     Renvoie None si le fichier est trop silencieux ou trop court pour juger
     (l'appelant retombe alors sur un traitement mono classique).
     """
-    pairs: list[tuple[np.ndarray, np.ndarray]] = []
-    length = min(CORRELATION_WINDOW, max(duration, 1.0))
-    span = max(0.0, duration - length)
-    starts = np.linspace(0.0, span, num=windows) if span > 0.5 else [0.0]
-    for start in starts:
-        pair = _pcm_pair(path, float(start), length)
-        if pair is None:
-            continue
-        left, right = pair
-        energy = np.sqrt((left**2 + right**2) / 2.0)
-        threshold = max(60.0, float(np.percentile(energy, 90)) * 0.2)
-        mask = energy > threshold
-        if mask.sum() < 400 or left[mask].std() < 1e-6 or right[mask].std() < 1e-6:
-            continue
-        pairs.append((left[mask], right[mask]))
-
-    if not pairs:
-        return None
-    left = np.concatenate([pair[0] for pair in pairs])
-    right = np.concatenate([pair[1] for pair in pairs])
-    correlation = float(np.corrcoef(left, right)[0, 1])
-    return correlation if np.isfinite(correlation) else None
+    return channel_profile(path, duration, windows=windows).correlation
 
 
 def detect_silences(
