@@ -22,6 +22,7 @@ Conventions :
 | 1.7 | Passe LLM de fusion des locuteurs (sur-découpage entre tranches) | [x] |
 | 1.8 | Stockage : transcript dans la bibliothèque (index + fichiers) | [ ] |
 | 1.9 | UI : bouton Importer, progression, transcript cliquable, renommage, export | [ ] |
+| 1.10 | Nettoyage éditorial d'un transcript (`vox --clean-transcript`, contexte + glossaire) | [x] |
 
 **Test n°1 (en cours, VPS)** — premier essai réel le 30/09 sur un appel de
 33 min à 3 personnes (`Call KH Route.m4a`, 97 min au total dont seules les
@@ -91,6 +92,12 @@ l'agent.
 
 ## Journal
 
+- **30/09/2026 (suite)** — nettoyage éditorial (étape 1.10) : les 33 min
+  corrigées en 56 s pour **0,10 $** (Claude Haiku 4.5, 5 blocs parallèles).
+  « Calis » → « Khalis » (16 occurrences), répétitions et « euh » supprimés
+  (−9 % de mots), ponctuation et majuscules rétablies, horodatages et
+  locuteurs intacts. Le premier essai (Gemini 3.5 Flash) avait coûté 0,33 $
+  et perdu un bloc sur quatre : d'où le recoupage automatique des blocs.
 - **30/09/2026** — premier import réel (appel KH Route, 33 min, 3 personnes) :
   18 s, 0,055 $, 3 locuteurs après la passe LLM de raccord (8 sans elle).
   Corrections issues du terrain : limite de taille de `mai-transcribe-2`
