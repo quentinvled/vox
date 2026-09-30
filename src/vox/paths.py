@@ -55,19 +55,16 @@ def recordings_index_file() -> Path:
     return data_dir() / "enregistrements.jsonl"
 
 
-def downloads_dir() -> Path:
-    """Dossier ou deposer les mises a jour telechargees.
+def updates_dir() -> Path:
+    """Dossier prive ou Vox telecharge ses mises a jour.
 
-    On prefere le dossier « Telechargements » de l'utilisateur (la ou il
-    cherchera naturellement) ; a defaut, un sous-dossier des donnees.
+    On ne depose jamais un installateur (plusieurs dizaines de Mo) dans le
+    dossier « Telechargements » de l'utilisateur : il s'y accumulerait. Ce
+    dossier est vide apres chaque installation (voir `updates.install`).
     """
-    home = Path.home()
-    for candidate in (home / "Downloads", home / "Téléchargements"):
-        if candidate.is_dir():
-            return candidate
-    fallback = data_dir() / "mises-a-jour"
-    fallback.mkdir(parents=True, exist_ok=True)
-    return fallback
+    path = data_dir() / "mises-a-jour"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def log_file() -> Path:

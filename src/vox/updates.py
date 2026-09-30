@@ -4,10 +4,10 @@ Principe : l'application interroge une petite URL publique qui decrit la
 derniere version publiee. Si elle est plus recente, Vox le signale et propose
 d'ouvrir la page de telechargement.
 
-Choix de conception : Vox n'execute **jamais** un binaire sans action explicite de
-l'utilisateur. L'application peut telecharger le fichier d'installation (avec sa
-progression, depuis l'onglet « Mises a jour ») mais c'est toujours l'utilisateur
-qui declenche le lancement. Cela evite de dependre d'une signature de code.
+Choix de conception : Vox n'installe **jamais** une mise a jour sans action
+explicite de l'utilisateur. Depuis l'onglet « Mises a jour », un seul clic
+telecharge la nouvelle version dans un dossier prive, l'installe et redemarre.
+Cela evite de dependre d'une signature de code.
 
 Format du manifeste (JSON) :
 
@@ -30,7 +30,10 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -159,6 +162,78 @@ def download(
         raise
     part.replace(destination)
     return destination
+
+
+def cached_file(url: str, version: str = "") -> Path:
+    """Emplacement du fichier de mise a jour dans le dossier prive de Vox."""
+    from .paths import updates_dir
+
+    fallback = f"Vox-{version}" if version else "Vox-mise-a-jour"
+    return updates_dir() / suggested_filename(url, fallback=fallback)
+
+
+def cleanup(keep: Path | None = None) -> None:
+    """Vide le dossier des mises a jour, sauf le fichier `keep` s'il est donne."""
+    from .paths import updates_dir
+
+    directory = updates_dir()
+    keep_resolved = Path(keep).resolve() if keep is not None else None
+    for entry in directory.iterdir():
+        if not entry.is_file():
+            continue
+        try:
+            if keep_resolved is not None and entry.resolve() == keep_resolved:
+                continue
+            entry.unlink()
+        except OSError:
+            continue
+
+
+def install(downloaded: Path) -> tuple[bool, str]:
+    """Installe une mise a jour telechargee et relance Vox.
+
+    Renvoie `(True, "")` quand l'application doit se fermer tout de suite :
+    la nouvelle version est lancee (Linux) ou va l'etre par l'installeur
+    (Windows). Sinon `(False, raison)`.
+    """
+    downloaded = Path(downloaded)
+    if not downloaded.exists():
+        return False, "le fichier téléchargé est introuvable"
+
+    if sys.platform == "win32":
+        # L'installeur ferme Vox, remplace les fichiers puis relance.
+        try:
+            subprocess.Popen([str(downloaded), "--silent"], close_fds=True)  # noqa: S603
+        except OSError as exc:
+            return False, f"lancement de l'installeur impossible ({exc})"
+        return True, ""
+
+    appimage = os.environ.get("APPIMAGE", "")
+    target = Path(appimage) if appimage else None
+    if target is not None and target.is_file():
+        # Remplacement atomique : Vox tourne encore sur l'ancien fichier monte,
+        # la nouvelle version servira au redemarrage.
+        temporary = target.with_name(target.name + ".new")
+        try:
+            shutil.copy2(downloaded, temporary)
+            temporary.chmod(0o755)
+            os.replace(temporary, target)
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                temporary.unlink(missing_ok=True)
+            return False, f"remplacement de l'AppImage impossible ({exc})"
+        with contextlib.suppress(OSError):
+            downloaded.unlink()
+        try:
+            subprocess.Popen([str(target)], close_fds=True)  # noqa: S603
+        except OSError as exc:
+            return False, f"relance impossible ({exc})"
+        return True, ""
+
+    return False, (
+        "Vox n'est pas lancé depuis une AppImage : installe la nouvelle version "
+        "manuellement."
+    )
 
 
 def manifest_example(version: str, url: str = "", notes: str = "") -> str:

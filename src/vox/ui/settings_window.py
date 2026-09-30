@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import sys
-from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QKeyEvent
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -139,51 +137,13 @@ class _KeyTester(QThread):
         self.tested.emit(True, detail)
 
 
-class _UpdateInspector(QThread):
-    """Interroge le manifeste de mise a jour hors du thread d'interface."""
-
-    checked = Signal(object, str)
-
-    def __init__(self, url: str, current: str, parent=None) -> None:
-        super().__init__(parent)
-        self._url = url
-        self._current = current
-
-    def run(self) -> None:
-        from ..updates import check
-
-        info, reason = check(self._url, self._current)
-        self.checked.emit(info, reason)
-
-
-class _Downloader(QThread):
-    """Telecharge la mise a jour hors du thread d'interface."""
-
-    progress = Signal(int, int)
-    done = Signal(object)
-    failed = Signal(str)
-
-    def __init__(self, url: str, destination: Path, parent=None) -> None:
-        super().__init__(parent)
-        self._url = url
-        self._destination = destination
-
-    def run(self) -> None:
-        from ..updates import download
-
-        try:
-            path = download(self._url, self._destination, on_progress=self.progress.emit)
-        except Exception as exc:
-            self.failed.emit(str(exc))
-            return
-        self.done.emit(path)
-
-
 class SettingsWindow(QDialog):
     """Boîte de dialogue de configuration."""
 
     open_recordings_requested = Signal()
     dashboard_requested = Signal()
+    check_requested = Signal(str)
+    update_requested = Signal()
 
     def __init__(self, settings: Settings, catalogue: Catalogue, parent=None) -> None:
         super().__init__(parent)
@@ -192,10 +152,7 @@ class SettingsWindow(QDialog):
         self._settings = settings
         self._catalogue = catalogue
         self._tester: _KeyTester | None = None
-        self._update_inspector: _UpdateInspector | None = None
         self._update_info = None
-        self._downloader: _Downloader | None = None
-        self._download_path: Path | None = None
         self._keys: dict[str, str] = {}
         self._active_provider: str = settings.provider
         self._capturing = False
@@ -654,34 +611,20 @@ class SettingsWindow(QDialog):
         self.version_label = QLabel(f"Vox {__version__}")
         form.addRow("Version installée", self.version_label)
 
-        self.update_check = QCheckBox("Vérifier les mises à jour au démarrage")
-        form.addRow("", self.update_check)
-
-        self.auto_update_check = QCheckBox("Installer les mises à jour automatiquement")
-        self.auto_update_check.setToolTip(
-            "Vox télécharge la nouvelle version, l'installe puis redémarre tout seul. "
-            "Décoche pour garder la main (téléchargement manuel ci-dessous)."
+        self.update_status = QLabel("")
+        self.update_status.setObjectName("hint")
+        self.update_status.setWordWrap(True)
+        self.update_status.setText(
+            "Clique sur « Vérifier les mises à jour » pour comparer avec la "
+            "dernière version publiée."
         )
-        form.addRow("", self.auto_update_check)
+        form.addRow("", self.update_status)
 
-        self.manifest_edit = QLineEdit()
-        self.manifest_edit.setPlaceholderText(
-            "https://github.com/quentinvled/vox/releases/latest/download/version.json"
-        )
-        form.addRow("URL du manifeste", self.manifest_edit)
-
-        actions = QHBoxLayout()
-        actions.setSpacing(6)
-        self.update_now_button = QPushButton("Vérifier maintenant")
-        self.update_now_button.clicked.connect(self._check_updates_now)
-        actions.addWidget(self.update_now_button)
-        self.download_button = QPushButton("Télécharger la mise à jour")
-        self.download_button.setObjectName("primary")
-        self.download_button.setEnabled(False)
-        self.download_button.clicked.connect(self._on_download_clicked)
-        actions.addWidget(self.download_button)
-        actions.addStretch(1)
-        form.addRow("", actions)
+        self.update_notes = QLabel("")
+        self.update_notes.setObjectName("hint")
+        self.update_notes.setWordWrap(True)
+        self.update_notes.setVisible(False)
+        form.addRow("", self.update_notes)
 
         self.download_bar = QProgressBar()
         self.download_bar.setRange(0, 100)
@@ -689,21 +632,42 @@ class SettingsWindow(QDialog):
         self.download_bar.setVisible(False)
         form.addRow("", self.download_bar)
 
-        self.update_status = QLabel("")
-        self.update_status.setObjectName("hint")
-        self.update_status.setWordWrap(True)
-        self.update_status.setText(
-            "Clique sur « Vérifier maintenant » pour comparer avec la dernière version publiée."
+        self.manifest_edit = QLineEdit()
+        self.manifest_edit.setPlaceholderText(
+            "https://github.com/quentinvled/vox/releases/latest/download/version.json"
         )
-        form.addRow("", self.update_status)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        self.update_button = QPushButton("Mettre à jour maintenant")
+        self.update_button.setObjectName("primary")
+        self.update_button.setToolTip(
+            "Télécharge la nouvelle version, l'installe et redémarre Vox."
+        )
+        self.update_button.setVisible(False)
+        self.update_button.clicked.connect(self.update_requested.emit)
+        actions.addWidget(self.update_button)
+        self.check_button = QPushButton("Vérifier les mises à jour")
+        self.check_button.clicked.connect(
+            lambda: self.check_requested.emit(self.manifest_edit.text().strip())
+        )
+        actions.addWidget(self.check_button)
+        actions.addStretch(1)
+        form.addRow("", actions)
 
         outer.addWidget(box)
 
+        advanced = QGroupBox("Options avancées")
+        advanced.setCheckable(True)
+        advanced.setChecked(False)
+        advanced_form = QFormLayout(advanced)
+        advanced_form.addRow("Adresse de mise à jour", self.manifest_edit)
+        outer.addWidget(advanced)
+
         hint = QLabel(
-            "Vox lit un petit fichier JSON publié par l'auteur et compare son "
-            "numéro de version au sien. S'il est plus récent, Vox peut "
-            "télécharger le fichier d'installation (avec sa progression) et "
-            "te proposer de le lancer. Rien ne s'exécute sans ton accord."
+            "Vox compare son numéro de version à celui publié, puis télécharge "
+            "et installe la nouvelle version en un clic — sans rien laisser "
+            "dans ton dossier Téléchargements."
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
@@ -853,99 +817,52 @@ class SettingsWindow(QDialog):
         self.update_status.setText(text)
         self._restyle(self.update_status)
 
-    def _check_updates_now(self) -> None:
-        url = self.manifest_edit.text().strip()
-        if not url:
-            self._set_update_status("Renseigne d'abord l'URL du manifeste.", "error")
-            return
-        self.update_now_button.setEnabled(False)
-        self.download_button.setEnabled(False)
-        self._set_update_status("Vérification en cours…")
-        self._update_inspector = _UpdateInspector(url, __version__, self)
-        self._update_inspector.checked.connect(self._on_update_checked)
-        self._update_inspector.start()
-
-    def _reset_download_state(self) -> None:
-        self._download_path = None
-        self.download_bar.setVisible(False)
-        self.download_bar.setRange(0, 100)
-        self.download_bar.setValue(0)
-        self.download_bar.setFormat("%p %")
-        self.download_button.setText("Télécharger la mise à jour")
-
     def show_updates_tab(self) -> None:
         """Affiche l'onglet « Mises à jour »."""
         self.tabs.setCurrentIndex(self._updates_tab_index)
 
-    def present_update(self, info) -> None:
-        """Affiche une mise a jour deja connue (ouverte depuis le menu)."""
-        self._update_info = info
-        self._on_update_checked(info, "")
-        self.show_updates_tab()
+    # ------------------------------------------------------------------
+    # Etat de l'onglet (pilote par l'application)
+    # ------------------------------------------------------------------
+    def show_checking(self) -> None:
+        self.check_button.setEnabled(False)
+        self.update_button.setEnabled(False)
+        self._set_update_status("Vérification en cours…")
 
-    def show_auto_progress(self, received: int, total: int) -> None:
-        """Reflete la progression d'un telechargement automatique (si ouvert)."""
-        if not self.isVisible():
-            return
-        self.show_updates_tab()
-        self.download_bar.setVisible(True)
-        self.download_button.setEnabled(False)
-        self.download_button.setText("Téléchargement…")
-        self._on_download_progress(received, total)
-
-    def _on_update_checked(self, info, reason: str) -> None:
-        self.update_now_button.setEnabled(True)
+    def show_update_available(self, info) -> None:
         self._update_info = info
-        self._reset_download_state()
-        if info is None:
-            self.download_button.setEnabled(False)
-            if reason.startswith("à jour"):
-                self._set_update_status(f"Vox {__version__} est à jour.", "success")
-            else:
-                self._set_update_status(f"Vérification impossible : {reason}", "error")
-            return
         notes = (info.notes or "").strip()
-        message = f"Mise à jour disponible : Vox {info.version}."
+        message = f"Vox {info.version} est disponible."
         if info.published_at:
             message += f" (publiée le {info.published_at})"
-        if notes:
-            message += f"\n{notes}"
         self._set_update_status(message, "success")
-        self.download_button.setEnabled(bool(info.url))
+        self.update_notes.setText(notes)
+        self.update_notes.setVisible(bool(notes))
+        self._hide_progress()
+        has_url = bool(info.url)
+        self.update_button.setVisible(has_url)
+        self.update_button.setEnabled(has_url)
+        self.check_button.setEnabled(True)
 
-    # ------------------------------------------------------------------
-    # Telechargement de la mise a jour
-    # ------------------------------------------------------------------
-    def _on_download_clicked(self) -> None:
-        if self._download_path is not None:
-            self._launch_download()
-            return
-        info = self._update_info
-        url = (info.url if info else "") or self.manifest_edit.text().strip()
-        if not url:
-            self._set_update_status("Aucune adresse de téléchargement.", "error")
-            return
-        self._start_download(url)
+    def show_up_to_date(self) -> None:
+        self._update_info = None
+        self.update_notes.setVisible(False)
+        self.update_button.setVisible(False)
+        self._hide_progress()
+        self.check_button.setEnabled(True)
+        self._set_update_status(f"Vox {__version__} est à jour.", "success")
 
-    def _start_download(self, url: str) -> None:
-        from ..paths import downloads_dir
-        from ..updates import suggested_filename
+    def show_check_error(self, reason: str) -> None:
+        self._update_info = None
+        self.update_notes.setVisible(False)
+        self.update_button.setVisible(False)
+        self._hide_progress()
+        self.check_button.setEnabled(True)
+        self._set_update_status(f"Vérification impossible : {reason}", "error")
 
-        destination = downloads_dir() / suggested_filename(url)
-        self._download_path = None
-        self.download_button.setEnabled(False)
-        self.download_button.setText("Téléchargement…")
-        self.download_bar.setRange(0, 100)
-        self.download_bar.setValue(0)
+    def show_progress(self, received: int, total: int) -> None:
+        self.update_button.setVisible(False)
         self.download_bar.setVisible(True)
-        self._set_update_status(f"Téléchargement vers {destination}")
-        self._downloader = _Downloader(url, destination, self)
-        self._downloader.progress.connect(self._on_download_progress)
-        self._downloader.done.connect(self._on_download_done)
-        self._downloader.failed.connect(self._on_download_failed)
-        self._downloader.start()
-
-    def _on_download_progress(self, received: int, total: int) -> None:
         if total:
             self.download_bar.setRange(0, 100)
             self.download_bar.setValue(int(received * 100 / total))
@@ -959,38 +876,25 @@ class SettingsWindow(QDialog):
             self.download_bar.setRange(0, 0)
             self._set_update_status(f"Téléchargement… {received / 1048576:.1f} Mo")
 
-    def _on_download_done(self, path) -> None:
-        self._download_path = Path(path)
+    def show_installing(self) -> None:
         self.download_bar.setRange(0, 100)
         self.download_bar.setValue(100)
-        self.download_bar.setFormat("Téléchargement terminé")
-        self.download_button.setEnabled(True)
-        self.download_button.setText("Installer la mise à jour")
-        self._set_update_status(f"Téléchargement terminé : {self._download_path}", "success")
+        self.download_bar.setFormat("Installation…")
+        self._set_update_status("Installation… Vox va redémarrer.", "success")
 
-    def _on_download_failed(self, message: str) -> None:
-        self._download_path = None
+    def show_download_error(self, message: str) -> None:
+        self._hide_progress()
+        has_url = bool(self._update_info and self._update_info.url)
+        self.update_button.setVisible(has_url)
+        self.update_button.setEnabled(has_url)
+        self.check_button.setEnabled(True)
+        self._set_update_status(f"Échec : {message}", "error")
+
+    def _hide_progress(self) -> None:
         self.download_bar.setVisible(False)
-        self.download_button.setEnabled(True)
-        self.download_button.setText("Réessayer le téléchargement")
-        self._set_update_status(f"Téléchargement impossible : {message}", "error")
-
-    def _launch_download(self) -> None:
-        path = self._download_path
-        if path is None or not path.exists():
-            return
-        if sys.platform == "win32":
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
-            return
-        # Linux : rendre l'AppImage executable puis la lancer.
-        import subprocess
-
-        with contextlib.suppress(OSError):
-            path.chmod(path.stat().st_mode | 0o111)
-        try:
-            subprocess.Popen([str(path)])  # noqa: S603 - fichier choisi par l'utilisateur
-        except OSError as exc:
-            self._set_update_status(f"Lancement impossible : {exc}", "error")
+        self.download_bar.setRange(0, 100)
+        self.download_bar.setValue(0)
+        self.download_bar.setFormat("%p %")
 
     @staticmethod
     def _restyle(widget: QWidget) -> None:
@@ -1023,8 +927,6 @@ class SettingsWindow(QDialog):
         self._sync_hotkey_state()
         self.enter_check.setChecked(settings.double_tap_enter)
         self.autostart_check.setChecked(settings.autostart)
-        self.update_check.setChecked(settings.check_updates)
-        self.auto_update_check.setChecked(settings.auto_update)
         self.manifest_edit.setText(settings.update_manifest_url)
 
         index = self.device_combo.findData(settings.input_device)
@@ -1101,8 +1003,6 @@ class SettingsWindow(QDialog):
             hotkey_mode=self.hotkey_mode_combo.currentData(),
             double_tap_enter=self.enter_check.isChecked(),
             autostart=self.autostart_check.isChecked(),
-            check_updates=self.update_check.isChecked(),
-            auto_update=self.auto_update_check.isChecked(),
             update_manifest_url=self.manifest_edit.text().strip(),
             input_device=self.device_combo.currentData(),
             max_record_seconds=self.max_seconds_spin.value(),

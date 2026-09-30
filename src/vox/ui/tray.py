@@ -197,7 +197,10 @@ class Tray(QSystemTrayIcon):
         self.setToolTip(f"Vox {__version__}\n{text}\n{self._hotkey_label}")
 
     def set_update_available(self, version: str) -> None:
-        """Fait apparaitre l'entree « Mise a jour disponible »."""
+        """Fait apparaitre (ou masque si `version` est vide) l'entree de menu."""
+        if not version:
+            self.update_action.setVisible(False)
+            return
         self.update_action.setText(f"Mise à jour {version} disponible…")
         self.update_action.setVisible(True)
 

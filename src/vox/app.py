@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
-import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -494,6 +491,12 @@ class VoxApp(QObject):
 
         window.open_recordings_requested.connect(_on_open_recordings)
         window.dashboard_requested.connect(self.open_stats)
+        window.check_requested.connect(
+            lambda url: self.check_updates(url, manual=True)
+        )
+        window.update_requested.connect(self.start_update)
+        if self._update_info is not None:
+            window.show_update_available(self._update_info)
 
         def _on_finished(result: int) -> None:
             self._settings_window = None
@@ -509,51 +512,67 @@ class VoxApp(QObject):
         window.raise_()
         window.activateWindow()
 
-    def check_updates(self) -> None:
+    def check_updates(self, url: str | None = None, manual: bool = False) -> None:
         """Interroge le manifeste de version (silencieux en cas d'echec)."""
-        if not self.settings.check_updates:
+        manifest = (url or self.settings.update_manifest_url or "").strip()
+        window = self._settings_window
+        if not manifest:
+            if manual and window is not None:
+                window.show_check_error("aucune adresse de mise à jour configurée")
             return
-        url = (self.settings.update_manifest_url or "").strip()
-        if not url:
-            return
-        self._update_checker = _UpdateChecker(url, __version__, self)
+        if manual and window is not None:
+            window.show_checking()
+        self._update_checker = _UpdateChecker(manifest, __version__, self)
         self._update_checker.checked.connect(self._on_update_checked)
         self._update_checker.start()
 
     def _on_update_checked(self, info: updates.UpdateInfo | None, reason: str) -> None:
+        window = self._settings_window
         if info is None:
             log.info("Mise à jour : %s", reason)
+            self._update_info = None
+            self.tray.set_update_available("")
+            if window is not None:
+                if reason.startswith("à jour"):
+                    window.show_up_to_date()
+                else:
+                    window.show_check_error(reason)
             return
         self._update_info = info
         log.info("Mise à jour disponible : %s", info.version)
         self.tray.set_update_available(info.version)
+        if window is not None:
+            window.show_update_available(info)
         notes = (info.notes or "").strip()
-        if self.settings.auto_update and info.url:
-            self.tray.showMessage(
-                f"Vox {info.version} : mise à jour en cours",
-                (notes + "\n" if notes else "")
-                + "Téléchargement puis installation automatiques…",
-                QSystemTrayIcon.Information,
-                8000,
-            )
-            self._auto_update(info)
-            return
         self.tray.showMessage(
             f"Vox {info.version} est disponible",
             (notes + "\n" if notes else "")
-            + "Clic droit sur l'icône → Mise à jour disponible…",
+            + "Ouvre Réglages → Mises à jour pour la mettre à jour en un clic.",
             QSystemTrayIcon.Information,
             12000,
         )
 
     # ------------------------------------------------------------------
-    # Mise a jour automatique
+    # Mise a jour en un clic
     # ------------------------------------------------------------------
-    def _auto_update(self, info: updates.UpdateInfo) -> None:
-        from .paths import downloads_dir
+    def start_update(self) -> None:
+        """Telecharge puis installe la mise a jour en un seul geste."""
+        info = self._update_info
+        if info is None or not info.url:
+            # Rien de connu pour l'instant : on verifie, l'utilisateur recliquera.
+            self.check_updates(manual=True)
+            return
 
-        destination = downloads_dir() / updates.suggested_filename(info.url)
-        log.info("Mise a jour automatique : %s -> %s", info.url, destination)
+        destination = updates.cached_file(info.url, info.version)
+        if destination.exists() and destination.stat().st_size > 0:
+            log.info("Mise a jour deja telechargee : %s", destination)
+            self._install_update(destination)
+            return
+
+        updates.cleanup()
+        log.info("Telechargement de la mise a jour %s -> %s", info.url, destination)
+        if self._settings_window is not None:
+            self._settings_window.show_progress(0, 0)
         self._downloader = _UpdateDownloader(info.url, destination, self)
         self._downloader.progress.connect(self._on_update_progress)
         self._downloader.done.connect(self._on_update_downloaded)
@@ -562,13 +581,15 @@ class VoxApp(QObject):
 
     def _on_update_progress(self, received: int, total: int) -> None:
         if self._settings_window is not None:
-            self._settings_window.show_auto_progress(received, total)
+            self._settings_window.show_progress(received, total)
 
     def _on_update_failed(self, message: str) -> None:
-        log.warning("Mise a jour automatique impossible : %s", message)
+        log.warning("Telechargement de la mise a jour impossible : %s", message)
+        if self._settings_window is not None:
+            self._settings_window.show_download_error(message)
         self.tray.showMessage(
-            "Mise à jour : échec du téléchargement",
-            f"{message}\nOuvre Réglages → Mises à jour pour réessayer.",
+            "Vox : échec du téléchargement",
+            f"{message}\nRéessaie depuis Réglages → Mises à jour.",
             QSystemTrayIcon.Warning,
             12000,
         )
@@ -583,36 +604,20 @@ class VoxApp(QObject):
 
     def _install_update(self, path: Path) -> None:
         """Installe la mise a jour telechargee, puis redemarre Vox."""
-        if sys.platform == "win32":
-            # L'installeur arrete Vox, remplace les fichiers et relance la
-            # nouvelle version : on lui laisse la main et on se ferme.
-            log.info("Lancement de l'installeur : %s", path)
-            subprocess.Popen([str(path), "--silent"], close_fds=True)  # noqa: S603
+        if self._settings_window is not None:
+            self._settings_window.show_installing()
+        log.info("Installation de la mise a jour : %s", path)
+        ok, reason = updates.install(path)
+        if ok:
             self.quit()
             return
-
-        appimage = os.environ.get("APPIMAGE", "")
-        target = Path(appimage) if appimage else None
-        if target is not None and target.is_file():
-            # Remplacement atomique : le processus en cours garde l'ancien
-            # fichier monte, la nouvelle version sert au prochain demarrage.
-            tmp = target.with_name(target.name + ".new")
-            try:
-                shutil.copy2(path, tmp)
-                tmp.chmod(0o755)
-                os.replace(tmp, target)
-            except OSError as exc:
-                log.warning("Remplacement de l'AppImage impossible : %s", exc)
-            else:
-                log.info("AppImage remplacee : %s", target)
-                subprocess.Popen([str(target)], close_fds=True)  # noqa: S603
-                self.quit()
-                return
-
+        log.warning("Installation impossible : %s", reason)
+        if self._settings_window is not None:
+            self._settings_window.show_download_error(reason)
         self.tray.showMessage(
-            "Mise à jour téléchargée",
-            f"Fichier prêt : {path}\nOuvre Réglages → Mises à jour pour l'installer.",
-            QSystemTrayIcon.Information,
+            "Vox : installation impossible",
+            reason,
+            QSystemTrayIcon.Warning,
             12000,
         )
 
@@ -626,10 +631,9 @@ class VoxApp(QObject):
         window = self._settings_window
         if window is None:
             return
+        window.show_updates_tab()
         if info is not None:
-            window.present_update(info)
-        else:
-            window.show_updates_tab()
+            window.show_update_available(info)
 
     def open_stats(self) -> None:
         """Ouvre (ou ramene au premier plan) le tableau de bord."""

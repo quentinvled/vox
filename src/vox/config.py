@@ -138,8 +138,10 @@ class Settings:
 
     # --- Mises a jour ---
     check_updates: bool = True
-    # Telecharge et installe la nouvelle version automatiquement, puis redemarre.
-    auto_update: bool = True
+    # Obsolete : la mise a jour se fait desormais en un clic depuis l'onglet
+    # « Mises a jour » (plus de telechargement automatique). Le champ reste
+    # present pour ne pas casser les settings.json existants.
+    auto_update: bool = False
     update_manifest_url: str = DEFAULT_MANIFEST_URL
     show_overlay_on_result: bool = True
 
@@ -155,6 +157,8 @@ class Settings:
         # Le theme clair a ete retire : on reste en sombre, meme si un ancien
         # settings.json contenait « light ».
         self.theme = "dark"
+        # Plus d'installation automatique : tout passe par le bouton, en un clic.
+        self.auto_update = False
 
     # ------------------------------------------------------------------
     @property

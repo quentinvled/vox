@@ -31,7 +31,7 @@ Release GitHub v0.2.0
 L'application interroge l'URL stable :
   .../releases/latest/download/version.json
   → choisit son fichier selon l'OS (champ « urls »)
-  → si plus recent : entree « Mise a jour disponible » dans le menu
+  → si plus recent : bouton « Mettre a jour maintenant » (un clic, redemarre)
 ```
 
 - **`__version__` dans `src/vox/__init__.py` est la source unique.**

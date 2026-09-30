@@ -71,12 +71,12 @@ l'intégrité du téléchargement.
 
 ## Mises à jour
 
-Vox vérifie automatiquement les nouvelles versions au démarrage et deux fois
-par jour. Quand une version plus récente est publiée, une notification et une
-entrée « Mise à jour disponible » apparaissent dans le menu. Elle ouvre
-l'onglet **Mises à jour** des réglages, où Vox peut **télécharger le fichier
-d'installation avec sa progression**, puis te proposer de le lancer. Rien ne
-s'exécute sans ton accord.
+Vox vérifie les nouvelles versions au démarrage et deux fois par jour. Quand
+une version plus récente est publiée, une notification et une entrée « Mise à
+jour disponible » apparaissent dans le menu. L'onglet **Mises à jour** des
+réglages affiche alors un bouton **« Mettre à jour maintenant »** : en un clic,
+Vox télécharge la nouvelle version (dans un dossier privé, jamais dans tes
+Téléchargements), l'installe et redémarre. Rien ne s'exécute sans ton clic.
 
 ## Désinstaller
 
