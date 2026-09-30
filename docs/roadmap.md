@@ -23,6 +23,7 @@ Conventions :
 | 1.8 | Stockage : transcript dans la bibliothèque (index + fichiers) | [ ] |
 | 1.9 | UI : bouton Importer, progression, transcript cliquable, renommage, export | [ ] |
 | 1.10 | Nettoyage éditorial d'un transcript (`vox --clean-transcript`, contexte + glossaire) | [x] |
+| 1.11 | Prénoms des locuteurs : déduction LLM (`--name-speakers`) et renommage explicite (`--rename-speakers`) | [x] |
 
 **Test n°1 (en cours, VPS)** — premier essai réel le 30/09 sur un appel de
 33 min à 3 personnes (`Call KH Route.m4a`, 97 min au total dont seules les
@@ -92,6 +93,14 @@ l'agent.
 
 ## Journal
 
+- **30/09/2026 (prénoms)** — étape 1.11 : détection des prénoms dans l'appel KH.
+  « Jonas » est cité 5 fois, « Quentin » 1 fois (24:51), « Mikael » jamais dans
+  les 33 premières minutes (déduit par élimination). L'inférence LLM avait
+  inversé Jonas et Quentin (elle nommait « Jonas » celui qui demande « t'es là,
+  Jonas ? ») : le renommage explicite `--rename-speakers` a été ajouté pour
+  appliquer la déduction vérifiée à la main. Mapping retenu : Jonas =
+  locuteur 1 (transporteur), Quentin = locuteur 2 (éditeur), Mikael =
+  locuteur 3 (éditeur).
 - **30/09/2026 (suite)** — nettoyage éditorial (étape 1.10) : les 33 min
   corrigées en 56 s pour **0,10 $** (Claude Haiku 4.5, 5 blocs parallèles).
   « Calis » → « Khalis » (16 occurrences), répétitions et « euh » supprimés

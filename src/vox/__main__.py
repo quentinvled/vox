@@ -33,6 +33,8 @@ def main() -> int:
         "--transcribe",
         "--import",
         "--clean-transcript",
+        "--name-speakers",
+        "--rename-speakers",
         "--stats",
         "--uninstall",
         "--where",
@@ -199,6 +201,52 @@ def main_cli() -> int:
         metavar="DOSSIER",
         help="dossier de sortie (defaut : a cote du fichier)",
     )
+    parser.add_argument(
+        "--name-speakers",
+        metavar="FICHIER_JSON",
+        help="retrouve les prenoms des locuteurs d'apres la conversation",
+    )
+    parser.add_argument(
+        "--speaker-names",
+        default="",
+        metavar="NOMS",
+        help="prenoms possibles, separes par des virgules (ex. « Jonas, Quentin, Mikael »)",
+    )
+    parser.add_argument(
+        "--name-model",
+        default="",
+        metavar="MODELE",
+        help="modele d'analyse (defaut : le modele de conversation des reglages)",
+    )
+    parser.add_argument(
+        "--name-context",
+        default="",
+        metavar="PHRASE",
+        help="une phrase de contexte (entreprise, projet, qui parle a qui)",
+    )
+    parser.add_argument(
+        "--name-out",
+        default="",
+        metavar="DOSSIER",
+        help="dossier de sortie (defaut : a cote du fichier)",
+    )
+    parser.add_argument(
+        "--rename-speakers",
+        metavar="FICHIER_JSON",
+        help="renomme les locuteurs avec une liste explicite (sans analyse)",
+    )
+    parser.add_argument(
+        "--rename",
+        default="",
+        metavar="NOMS",
+        help="prenoms dans l'ordre d'apparition (ex. « Jonas, Quentin, Mikael »)",
+    )
+    parser.add_argument(
+        "--rename-out",
+        default="",
+        metavar="DOSSIER",
+        help="dossier de sortie (defaut : a cote du fichier)",
+    )
     parser.add_argument("--version", action="store_true")
     args = parser.parse_args()
 
@@ -350,7 +398,110 @@ def main_cli() -> int:
     if args.clean_transcript:
         return _clean_command(args)
 
+    if args.name_speakers:
+        return _name_command(args)
+
+    if args.rename_speakers:
+        return _rename_command(args)
+
     parser.print_help()
+    return 0
+
+
+def _rename_command(args) -> int:
+    """`vox --rename-speakers` : renommage explicite, dans l'ordre d'apparition."""
+    import json
+    from pathlib import Path
+
+    from .naming import rename_in_order
+    from .transcript import Transcript
+
+    source = Path(args.rename_speakers).expanduser()
+    if not source.exists():
+        print(f"Fichier introuvable : {source}")
+        return 1
+    try:
+        transcript = Transcript.from_dict(json.loads(source.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        print(f"Transcript illisible : {exc}")
+        return 1
+
+    names = [item.strip() for item in args.rename.split(",") if item.strip()]
+    if not names:
+        print("Aucun prénom fourni : utilise --rename \"Jonas, Quentin, Mikael\".")
+        return 1
+    mapping = rename_in_order(transcript, names)
+
+    target_dir = Path(args.rename_out).expanduser() if args.rename_out else source.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+    base = target_dir / f"{source.stem} + prénoms"
+    base.with_suffix(".md").write_text(transcript.to_markdown(), encoding="utf-8")
+    base.with_suffix(".txt").write_text(transcript.to_text(with_time=True), encoding="utf-8")
+    base.with_suffix(".json").write_text(
+        json.dumps(transcript.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print("  Prénoms appliqués :")
+    for label, name in mapping.items():
+        print(f"    {label} → {name}")
+    print(f"  Fichiers : {base.name}.md, .txt, .json ({target_dir})")
+    return 0
+
+
+def _name_command(args) -> int:
+    """`vox --name-speakers` : attribution des prénoms d'après la conversation."""
+    import json
+    from pathlib import Path
+
+    from . import config as config_module
+    from .api import Client
+    from .naming import infer_speaker_names
+    from .transcript import Transcript
+
+    source = Path(args.name_speakers).expanduser()
+    if not source.exists():
+        print(f"Fichier introuvable : {source}")
+        return 1
+    settings = config_module.load()
+    key = config_module.key_for("openrouter", settings)
+    if not key:
+        print("Aucune clé OpenRouter : l'analyse passe par un modèle de conversation.")
+        return 1
+    try:
+        transcript = Transcript.from_dict(json.loads(source.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        print(f"Transcript illisible : {exc}")
+        return 1
+
+    names = [item.strip() for item in args.speaker_names.split(",") if item.strip()]
+    model = args.name_model or settings.chat_model
+    print(f"Analyse : {source.name} — {len(transcript.speakers)} locuteurs, modèle {model}")
+
+    try:
+        with Client("openrouter", key, timeout=600.0) as client:
+            mapping = infer_speaker_names(
+                transcript, client, model, names=names, context=args.name_context
+            )
+    except Exception as exc:
+        print(f"Échec : {exc}")
+        return 1
+
+    if not mapping:
+        print("Aucun prénom identifié avec certitude : rien n'a été renommé.")
+        return 1
+
+    target_dir = Path(args.name_out).expanduser() if args.name_out else source.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+    base = target_dir / f"{source.stem} — prénoms"
+    base.with_suffix(".md").write_text(transcript.to_markdown(), encoding="utf-8")
+    base.with_suffix(".txt").write_text(transcript.to_text(with_time=True), encoding="utf-8")
+    base.with_suffix(".json").write_text(
+        json.dumps(transcript.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print("\n  Prénoms trouvés :")
+    for label, name in mapping.items():
+        print(f"    {label} → {name}")
+    print(f"  Locuteurs restants : {len(transcript.speakers) - len(mapping)}")
+    print(f"  Fichiers : {base.name}.md, .txt, .json ({target_dir})")
     return 0
 
 
