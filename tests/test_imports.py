@@ -58,6 +58,7 @@ class FakeClient:
 
     calls: ClassVar[list[dict]] = []
     failures: ClassVar[dict[int, int]] = {}
+    large_audio: ClassVar[set[int]] = set()
 
     def __init__(self, *_args, **_kwargs) -> None:
         pass
@@ -68,6 +69,11 @@ class FakeClient:
     def transcribe(self, data: bytes, model: str, **kwargs):
         index = len(self.calls)
         self.calls.append({"model": model, "bytes": len(data), **kwargs})
+        if index in self.large_audio:
+            raise ApiError(
+                "HTTP 400 : The selected model does not support large audio inputs",
+                status=400,
+            )
         status = self.failures.get(index)
         if status:
             raise ApiError("panne simulee", status=status)
@@ -88,6 +94,7 @@ class FakeClient:
 def _reset_fake():
     FakeClient.calls = []
     FakeClient.failures = {}
+    FakeClient.large_audio = set()
 
 
 def _long_call(path: Path) -> Path:
@@ -180,3 +187,43 @@ def test_process_file_skips_diarization_for_two_channels(tmp_path: Path, monkeyp
     assert len(FakeClient.calls) == 2
     assert all(call["provider_options"] == {} for call in FakeClient.calls)
     assert result.transcript.speaker_labels() == ["Canal gauche", "Canal droit"]
+
+
+@needs_ffmpeg
+def test_process_file_falls_back_to_lighter_container(tmp_path: Path, monkeypatch) -> None:
+    """Un flac refuse pour cause de poids doit repartir en mp3, pas en wav."""
+    monkeypatch.setattr(imports, "Client", FakeClient)
+    FakeClient.large_audio = {0}
+    source = _long_call(tmp_path / "appel.wav")
+    result = imports.process_file(source, Settings(import_parallel=1), codec="flac")
+
+    assert len(result.transcript.segments) == 4
+    formats = [call["audio_format"] for call in FakeClient.calls]
+    assert formats[0] == "flac"
+    assert formats[1] == "mp3", "le repli doit aller vers un conteneur plus leger"
+
+
+@needs_ffmpeg
+def test_process_file_reports_large_audio_hint(tmp_path: Path, monkeypatch) -> None:
+    """Quand meme le mp3 est trop lourd, l'erreur doit dire quoi faire."""
+    monkeypatch.setattr(imports, "Client", FakeClient)
+    FakeClient.large_audio = {0}
+    source = _write_pattern(tmp_path / "court.wav", [("voix", 120.0)])
+    with pytest.raises(ApiError) as info:
+        imports.process_file(source, Settings(import_parallel=1))
+    assert "import_chunk_seconds" in str(info.value)
+
+
+@needs_ffmpeg
+def test_process_file_warns_when_model_does_not_diarize(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(imports, "Client", FakeClient)
+    source = _long_call(tmp_path / "appel.wav")
+    result = imports.process_file(
+        source,
+        Settings(import_parallel=1, import_merge_speakers=False),
+        model="x-ai/grok-stt-1.0",
+    )
+    assert any(
+        "ne distingue pas les locuteurs" in warning
+        for warning in result.transcript.warnings
+    )

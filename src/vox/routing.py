@@ -40,22 +40,32 @@ class ModelLimits:
 #   * mai-transcribe-2 refuse les entrees trop lourdes (~7-8 Mo) avec un 400
 #     « does not support large audio inputs ». En flac (16 kHz mono), cela
 #     plafonne vers 7 min ; en mp3 96 kb/s, 14 min passent encore.
+#   * deepgram/nova-3 refuse 10 min de flac mais accepte 10 min de mp3 : c'est
+#     une limite de poids, cote OpenRouter, pas de duree.
 #   * gemini-3.5-transcribe plafonne a 30 min avec diarisation (documentation).
+#     Mesure du 30/09 : via OpenRouter, il ne diarise pas et rend un segment
+#     global (voir api.NO_DIARIZATION_MODELS).
 MODEL_LIMITS: dict[str, ModelLimits] = {
     "microsoft/mai-transcribe-2": ModelLimits(chunk_seconds=720.0, codec="mp3"),
+    "deepgram/nova-3": ModelLimits(chunk_seconds=600.0, codec="mp3"),
     "google/gemini-3.5-transcribe": ModelLimits(chunk_seconds=1500.0, codec="mp3"),
 }
 
 
 def limits_for(model: str) -> ModelLimits:
-    """Limites du modele, ou valeurs par defaut raisonnables."""
+    """Limites du modele, ou valeurs par defaut raisonnables.
+
+    Le defaut est le **mp3** : l'API plafonne le poids des fichiers, pas la
+    duree, et le mp3 96 kb/s laisse passer ~14 min la ou le flac plafonne a
+    7 min. Les modeles connus peuvent toujours demander un autre conteneur.
+    """
     model = (model or "").strip()
     if model in MODEL_LIMITS:
         return MODEL_LIMITS[model]
     for known, limits in MODEL_LIMITS.items():
         if model.startswith(known.split(":", 1)[0] + ":"):
             return limits
-    return ModelLimits(chunk_seconds=DEFAULT_CHUNK_SECONDS, codec="flac")
+    return ModelLimits(chunk_seconds=DEFAULT_CHUNK_SECONDS, codec="mp3")
 
 
 @dataclass(frozen=True)

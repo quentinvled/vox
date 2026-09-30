@@ -67,3 +67,12 @@ def test_explicit_speaker_cap_wins() -> None:
     assert analyse(MONO, is_call=True, max_speakers=5).tracks[0].max_speakers == 5
     # Pistes separees par canal : aucune diarisation, donc pas de plafond.
     assert analyse(STEREO, correlation=0.1).tracks[0].max_speakers is None
+
+
+def test_unknown_model_defaults_to_light_container() -> None:
+    from vox.routing import limits_for
+
+    # Le defaut est le mp3 : l'API plafonne le poids, pas la duree.
+    assert limits_for("inconnu/modele").codec == "mp3"
+    assert limits_for("microsoft/mai-transcribe-2").chunk_seconds == 720.0
+    assert limits_for("deepgram/nova-3").codec == "mp3"

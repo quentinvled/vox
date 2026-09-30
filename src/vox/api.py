@@ -45,14 +45,23 @@ PROMPT_AWARE_PROVIDERS = (
 # Voir docs/modeles-diarisation.md — l'option est a verifier apres chaque
 # changement de version du fournisseur.
 DIARIZATION_PROVIDERS: dict[str, tuple[str, dict]] = {
-    "x-ai/grok-stt-1.0": ("xai", {"diarize": True}),
     "microsoft/mai-transcribe-2": ("azure", {"diarization": {"enabled": True}}),
     "deepgram/nova-3": ("deepgram", {"diarize": True, "punctuate": True, "smart_format": True}),
     "assemblyai/universal-3-5-pro": ("assemblyai", {"speaker_labels": True}),
-    "google/gemini-3.5-transcribe": ("google-ai-studio", {"diarization": {"enabled": True}}),
     "fish-audio/transcribe-1-pro": ("fish-audio", {}),
     "meta/muse-voice-transcribe-1.0": ("meta", {}),
 }
+
+# Mesure du 30/09/2026 sur un extrait reel de 2 min : via OpenRouter, ces
+# modeles ne renvoient ni segments fins ni locuteurs, meme avec l'option de
+# diarisation (« diarize » rejete ou ignore). On les transcrit en texte seul,
+# sans laisser croire a une diarisation.
+NO_DIARIZATION_MODELS: frozenset[str] = frozenset(
+    {
+        "x-ai/grok-stt-1.0",
+        "google/gemini-3.5-transcribe",
+    }
+)
 
 
 def _diarization_entry(model: str) -> tuple[str, dict] | None:
@@ -78,6 +87,16 @@ def diarization_options(model: str) -> dict:
 
 def supports_diarization(model: str) -> bool:
     return _diarization_entry(model) is not None
+
+
+def diarizes_by_default(model: str) -> bool:
+    """Le modele est-il connu pour distinguer les locuteurs ?
+
+    `False` uniquement pour les modeles mesures comme non diarisants via
+    OpenRouter ; un modele inconnu est presume capable.
+    """
+    model = (model or "").strip()
+    return model not in NO_DIARIZATION_MODELS
 
 # Tarifs Groq indicatifs ($/h d'audio), utilises pour l'affichage.
 GROQ_STT_PRICING = {

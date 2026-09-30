@@ -19,20 +19,42 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import audiofiles, routing
-from .api import ApiError, Client, diarization_options
+from .api import ApiError, Client, diarization_options, diarizes_by_default
 from .config import DEFAULT_DIARIZATION_MODEL, Settings, key_for
 from .speakers import merge_speakers_with_llm
 from .transcript import ChunkResult, Transcript, assemble, segments_from_payload
 
 log = logging.getLogger("vox")
 
-# Conteneurs essayes dans l'ordre : flac (sans perte, moitie d'un wav), puis wav.
-FORMAT_FALLBACK = ("flac", "wav")
+# Conteneurs essayes dans l'ordre : le choix initial, puis du plus leger au
+# plus sur (mp3, wav) si le fournisseur refuse le conteneur.
 # Erreurs passageres : on retente avant d'abandonner une tranche.
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 RETRY_DELAYS = (2.0, 6.0)
 # Erreurs ou l'on retente avec un autre conteneur (le fournisseur refuse le flac).
 FORMAT_STATUSES = (400, 415, 422)
+# Erreur de poids : le modele refuse le fichier, pas le conteneur. On retente
+# alors dans un conteneur plus leger (mp3), jamais dans un plus lourd (wav).
+LARGE_AUDIO_MARKERS = (
+    "large audio",
+    "audio too large",
+    "file too large",
+    "maximum size",
+)
+
+
+def _is_large_audio(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in LARGE_AUDIO_MARKERS)
+
+
+def _candidate_formats(primary: str) -> list[str]:
+    """Conteneurs a essayer : le choix initial, puis du plus leger au plus sur."""
+    candidates = [primary or "mp3"]
+    for fallback in ("mp3", "wav"):
+        if fallback not in candidates:
+            candidates.append(fallback)
+    return candidates
 
 
 class ImportCancelled(RuntimeError):
@@ -146,33 +168,13 @@ def process_file(
             track_label=track.label,
             fixed_speaker=not track.diarize,
         )
-        audio_format = codec or FORMAT_FALLBACK[0]
-        target = folder / f"piste{track_index}-tranche{chunk.index}.{audio_format}"
-        audiofiles.extract(
-            source,
-            chunk.start,
-            chunk.end - chunk.start,
-            target,
-            channel=track.channel,
-            fmt=audio_format,
-        )
         result.language = settings.language or ""
-        try:
-            transcription = _transcribe(
-                client,
-                target.read_bytes(),
-                audio_format,
-                resolved_model,
-                settings,
-                diarize=track.diarize,
-                cancel=cancel,
-            )
-        except ApiError as exc:
-            if exc.status not in FORMAT_STATUSES or audio_format == "wav":
-                raise
-            # Le fournisseur refuse le conteneur : on retente en wav.
-            audio_format = "wav"
-            target = folder / f"piste{track_index}-tranche{chunk.index}.wav"
+        formats = _candidate_formats(codec)
+        transcription = None
+        last_error: ApiError | None = None
+        target: Path | None = None
+        for position, audio_format in enumerate(formats):
+            target = folder / f"piste{track_index}-tranche{chunk.index}.{audio_format}"
             audiofiles.extract(
                 source,
                 chunk.start,
@@ -181,22 +183,45 @@ def process_file(
                 channel=track.channel,
                 fmt=audio_format,
             )
-            transcription = _transcribe(
-                client,
-                target.read_bytes(),
-                audio_format,
-                resolved_model,
-                settings,
-                diarize=track.diarize,
-                cancel=cancel,
-            )
+            try:
+                transcription = _transcribe(
+                    client,
+                    target.read_bytes(),
+                    audio_format,
+                    resolved_model,
+                    settings,
+                    diarize=track.diarize,
+                    cancel=cancel,
+                )
+                break
+            except ApiError as exc:
+                last_error = exc
+                if not keep_folder:
+                    with contextlib.suppress(OSError):
+                        target.unlink()
+                if _is_large_audio(exc):
+                    # Un conteneur plus leger (mp3) peut encore passer ; un
+                    # conteneur plus lourd (wav) n'a aucune chance.
+                    remaining = formats[position + 1 :]
+                    if audio_format != "mp3" and "mp3" in remaining:
+                        continue
+                    raise ApiError(
+                        f"{exc} — réduis la taille des tranches "
+                        "(réglage import_chunk_seconds) ou change de modèle.",
+                        status=exc.status or 400,
+                    ) from exc
+                if exc.status in FORMAT_STATUSES:
+                    continue  # conteneur refuse : on essaie le suivant
+                raise
+        if transcription is None:
+            raise last_error or ApiError("Transcription impossible")
         result.segments = segments_from_payload(transcription.raw, track_label=track.label)
         result.model = transcription.model
         result.cost = transcription.cost or 0.0
         result.seconds = transcription.seconds or 0.0
         if transcription.language:
             result.language = transcription.language
-        if not keep_folder:
+        if not keep_folder and target is not None:
             with contextlib.suppress(OSError):
                 target.unlink()
         with lock:
@@ -247,6 +272,12 @@ def process_file(
     transcript.model = resolved_model
     transcript.source = str(source)
     transcript.warnings.extend(warnings)
+    if any(track.diarize for track in strategy.tracks) and not diarizes_by_default(
+        resolved_model
+    ):
+        transcript.warnings.append(
+            f"{resolved_model} ne distingue pas les locuteurs : ils sont regroupés."
+        )
     transcript.extras.update(
         {
             "strategie": strategy.reason,
@@ -329,6 +360,8 @@ def _transcribe(
                 )
             except ApiError as exc:
                 last = exc
+                if _is_large_audio(exc):
+                    raise  # inutile de retenter : le fichier est trop lourd
                 if exc.status in RETRY_STATUSES:
                     continue
                 if exc.status in FORMAT_STATUSES and not attempt.get("response_format"):
@@ -343,7 +376,6 @@ def _transcribe(
 
 
 __all__ = [
-    "FORMAT_FALLBACK",
     "ImportCancelled",
     "ImportResult",
     "Progress",
