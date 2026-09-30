@@ -149,6 +149,13 @@ def main_cli() -> int:
         default="md,json",
         help="formats de sortie separes par des virgules : md,txt,srt,vtt,json",
     )
+    parser.add_argument(
+        "--import-limit",
+        type=float,
+        default=0.0,
+        metavar="MINUTES",
+        help="ne traiter que les N premieres minutes (essai avant l'heure entiere)",
+    )
     parser.add_argument("--version", action="store_true")
     args = parser.parse_args()
 
@@ -328,8 +335,16 @@ def _import_command(args) -> int:
             print(f"  {progress.stage:<14} {progress.message}")
 
     print(f"Import : {source}")
+    if args.import_limit:
+        print(f"  (limité aux {args.import_limit:g} premières minutes)")
     try:
-        result = process_file(source, settings, model=args.import_model, progress=on_progress)
+        result = process_file(
+            source,
+            settings,
+            model=args.import_model,
+            progress=on_progress,
+            limit_seconds=args.import_limit * 60.0 if args.import_limit else None,
+        )
     except Exception as exc:
         print(f"Échec : {exc}")
         return 1

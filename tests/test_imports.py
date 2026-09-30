@@ -151,6 +151,18 @@ def test_process_file_retries_transient_failure(tmp_path: Path, monkeypatch) -> 
 
 
 @needs_ffmpeg
+def test_process_file_honours_limit(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(imports, "Client", FakeClient)
+    source = _long_call(tmp_path / "appel.wav")
+    result = imports.process_file(source, Settings(import_parallel=1), limit_seconds=90.0)
+    # Un essai sur 90 s ne doit payer qu'une tranche, pas les 16 minutes.
+    assert result.chunks == 1
+    assert len(FakeClient.calls) == 1
+    assert result.transcript.duration == pytest.approx(90.0, abs=1.0)
+    assert result.transcript.extras["limite_secondes"] == pytest.approx(90.0, abs=0.5)
+
+
+@needs_ffmpeg
 def test_process_file_skips_diarization_for_two_channels(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(imports, "Client", FakeClient)
     left = _click(3.0, 1.0)

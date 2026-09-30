@@ -203,24 +203,27 @@ def detect_silences(
     *,
     noise_db: int = SILENCE_DB,
     min_seconds: float = SILENCE_MIN_SECONDS,
+    limit: float | None = None,
     timeout: float = 1800,
 ) -> list[tuple[float, float]]:
-    """Intervalles de silence (start, end) detectes par ffmpeg."""
-    result = _run(
-        [
-            ffmpeg_path(),
-            "-hide_banner",
-            "-nostats",
-            "-i",
-            str(path),
-            "-af",
-            f"silencedetect=noise={noise_db}dB:d={min_seconds}",
-            "-f",
-            "null",
-            "-",
-        ],
-        timeout=timeout,
-    )
+    """Intervalles de silence (start, end) detectes par ffmpeg.
+
+    `limit` borne l'analyse aux premieres secondes (utile pour un essai sur un
+    extrait sans decoder tout le fichier).
+    """
+    args = [ffmpeg_path(), "-hide_banner", "-nostats"]
+    if limit and limit > 0:
+        args += ["-t", f"{limit:.3f}"]
+    args += [
+        "-i",
+        str(path),
+        "-af",
+        f"silencedetect=noise={noise_db}dB:d={min_seconds}",
+        "-f",
+        "null",
+        "-",
+    ]
+    result = _run(args, timeout=timeout)
     text = result.stderr or ""
     starts = [float(value) for value in _SILENCE_START_RE.findall(text)]
     ends = [float(value) for value in _SILENCE_END_RE.findall(text)]

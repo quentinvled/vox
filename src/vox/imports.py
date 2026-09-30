@@ -69,8 +69,13 @@ def process_file(
     cancel: threading.Event | None = None,
     workdir: Path | str | None = None,
     max_workers: int | None = None,
+    limit_seconds: float | None = None,
 ) -> ImportResult:
-    """Transcrit et diarise un fichier, en s'adaptant a ce qu'il contient."""
+    """Transcrit et diarise un fichier, en s'adaptant a ce qu'il contient.
+
+    `limit_seconds` ne traite que le debut du fichier : pratique pour un essai
+    sur quelques minutes avant de payer l'heure entiere.
+    """
     started = time.perf_counter()
     source = Path(path)
     if not source.exists():
@@ -87,11 +92,15 @@ def process_file(
     strategy = routing.analyse(info, correlation)
     resolved_model = (model or settings.diarization_model or DEFAULT_DIARIZATION_MODEL).strip()
 
+    effective = info.duration
+    if limit_seconds and limit_seconds > 0:
+        effective = min(info.duration, float(limit_seconds))
+
     check_cancel()
     notify(Progress("silences", 0, 0, "Repérage des silences…"))
-    silences = audiofiles.detect_silences(source)
+    silences = audiofiles.detect_silences(source, limit=effective)
     chunk_seconds = float(settings.import_chunk_seconds or routing.DEFAULT_CHUNK_SECONDS)
-    chunks = audiofiles.plan_chunks(info.duration, silences, target=chunk_seconds)
+    chunks = audiofiles.plan_chunks(effective, silences, target=chunk_seconds)
 
     tasks = [(index, chunk) for index in range(len(strategy.tracks)) for chunk in chunks]
     total = len(tasks)
@@ -222,7 +231,7 @@ def process_file(
         raise first_error or audiofiles.AudioError("Aucune tranche n'a pu être transcrite")
 
     notify(Progress("fusion", total, total, "Assemblage du transcript…"))
-    transcript = assemble(results, duration=info.duration, title=source.stem)
+    transcript = assemble(results, duration=effective, title=source.stem)
     transcript.model = resolved_model
     transcript.source = str(source)
     transcript.warnings.extend(warnings)
@@ -233,6 +242,8 @@ def process_file(
             "canaux": info.channels,
         }
     )
+    if effective < info.duration:
+        transcript.extras["limite_secondes"] = round(effective, 1)
     notify(Progress("termine", total, total, "Terminé"))
     return ImportResult(
         transcript=transcript,
