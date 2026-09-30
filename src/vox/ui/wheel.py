@@ -1,7 +1,11 @@
-"""Widgets insensibles a la molette tant qu'ils n'ont pas le focus.
+"""Widgets insensibles a la molette : elle fait toujours defiler la page.
 
 Sans cela, faire defiler une page de reglages modifie le champ qui se trouve
-sous le curseur : tres desagreable, et source d'erreurs silencieuses.
+sous le curseur : tres desagreable, et source d'erreurs silencieuses. Le champ
+changeait meme quand il avait le focus — or Qt donne le focus au premier champ
+des l'ouverture, donc un simple scroll pouvait modifier un reglage sans qu'on
+s'en apercoive. La valeur ne change desormais plus **jamais** a la molette : on
+la modifie en cliquant (fleches, liste deroulante, saisie).
 
 On ne se contente pas d'ignorer l'evenement : selon le contexte, Qt ne le
 propage pas toujours au `QScrollArea` parent, et la page se retrouve bloquee des
@@ -45,9 +49,9 @@ class _NoWheelMixin:
         return int(delta / 120.0 * lines * line)
 
     def wheelEvent(self, event) -> None:  # noqa: N802 - API Qt
-        if self.hasFocus():
-            super().wheelEvent(event)
-            return
+        # On ne delegue jamais au widget de base : meme focalise, il ne doit pas
+        # changer de valeur a la molette. Seul le focus clavier (fleches, saisie)
+        # ou un clic modifie le champ.
         area = self._scroll_area()
         if area is None:
             event.ignore()
