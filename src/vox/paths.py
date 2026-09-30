@@ -55,6 +55,23 @@ def recordings_index_file() -> Path:
     return data_dir() / "enregistrements.jsonl"
 
 
+def library_dir() -> Path:
+    """Imports : index, transcripts et exports generes par l'application."""
+    path = data_dir() / "bibliotheque"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def library_index_file() -> Path:
+    return data_dir() / "bibliotheque.jsonl"
+
+
+def library_transcripts_dir() -> Path:
+    path = library_dir() / "transcripts"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def updates_dir() -> Path:
     """Dossier prive ou Vox telecharge ses mises a jour.
 
