@@ -73,7 +73,7 @@ class Tray(QSystemTrayIcon):
         dashboard_action.triggered.connect(self.stats_requested.emit)
         self._menu.addAction(dashboard_action)
 
-        history_action = QAction("Historique des enregistrements…", self._menu)
+        history_action = QAction("Bibliothèque (dictées, imports)…", self._menu)
         history_action.setToolTip(
             "Réécouter les dictées conservées, copier leur texte, les retranscrire"
         )

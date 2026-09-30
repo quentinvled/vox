@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -12,12 +13,15 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QDialog, QSystemTrayIcon
 
-from . import __version__, injector, models, recordings, sounds, updates
+from . import __version__, injector, library, models, recordings, sounds, updates
 from . import config as config_module
+from .api import Client
 from .autostart import set_autostart
 from .config import HOTKEY_CHOICES, Settings
 from .hotkey import EVENT_CANCEL, EVENT_START, EVENT_STOP, HotkeyManager
+from .imports import ImportCancelled, Progress, process_file
 from .models import Catalogue
+from .naming import infer_speaker_names
 from .pipeline import Pipeline
 from .reword import TONES
 from .ui.history_window import RecordingsWindow
@@ -89,6 +93,104 @@ class _UpdateDownloader(QThread):
         self.done.emit(path)
 
 
+class _ImportWorker(QThread):
+    """Importe des fichiers audio hors du fil d'interface.
+
+    Chaque fichier est transcrit, diarise puis range dans la bibliotheque.
+    L'annulation est cooperative : `stop()` arme l'evenement lu par
+    `imports.process_file`.
+    """
+
+    progress = Signal(int, int, str)
+    imported = Signal(str)
+    replaced = Signal(str)
+    failed = Signal(str, str)
+    cancelled = Signal()
+
+    def __init__(
+        self,
+        paths: list[str],
+        settings: Settings,
+        replace_id: str = "",
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._paths = list(paths)
+        self._settings = settings
+        self._replace_id = replace_id
+        self.cancel = threading.Event()
+
+    def stop(self) -> None:
+        self.cancel.set()
+
+    def run(self) -> None:
+        for path in self._paths:
+            if self.cancel.is_set():
+                self.cancelled.emit()
+                return
+            try:
+                result = process_file(
+                    path,
+                    self._settings,
+                    progress=self._on_progress,
+                    cancel=self.cancel,
+                )
+            except ImportCancelled:
+                self.cancelled.emit()
+                return
+            except Exception as exc:  # un fichier en echec ne bloque pas les autres
+                library.add(None, path, status="erreur", error=str(exc))
+                self.failed.emit(path, str(exc))
+                continue
+            if self._replace_id:
+                library.replace_transcript(
+                    self._replace_id,
+                    result.transcript,
+                    model=result.model,
+                    cost=result.transcript.cost,
+                )
+                self.replaced.emit(self._replace_id)
+            else:
+                entry = library.add(result.transcript, path, elapsed=result.elapsed)
+                self.imported.emit(entry.id)
+
+    def _on_progress(self, progress: Progress) -> None:
+        self.progress.emit(progress.done, progress.total, progress.message)
+
+
+class _NamesWorker(QThread):
+    """Demande a un modele de conversation de retrouver les prenoms."""
+
+    done = Signal(str, object)
+    failed = Signal(str, str)
+
+    def __init__(self, entry_id: str, settings: Settings, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._entry_id = entry_id
+        self._settings = settings
+
+    def run(self) -> None:
+        transcript = library.load_transcript(self._entry_id)
+        if transcript is None:
+            self.failed.emit(self._entry_id, "Transcript introuvable.")
+            return
+        key = config_module.key_for("openrouter", self._settings)
+        if not key:
+            self.failed.emit(self._entry_id, "Aucune clé OpenRouter pour l'analyse.")
+            return
+        try:
+            with Client("openrouter", key, timeout=180.0) as client:
+                mapping = infer_speaker_names(
+                    transcript, client, self._settings.chat_model
+                )
+        except Exception as exc:
+            self.failed.emit(self._entry_id, str(exc))
+            return
+        if mapping:
+            library.refresh(self._entry_id, transcript)
+        self.done.emit(self._entry_id, mapping)
+
+
 class VoxApp(QObject):
     """Controleur principal."""
 
@@ -106,6 +208,11 @@ class VoxApp(QObject):
         self._update_checker: _UpdateChecker | None = None
         self._update_info: updates.UpdateInfo | None = None
         self._downloader: _UpdateDownloader | None = None
+        self._import_worker: _ImportWorker | None = None
+        self._names_worker: _NamesWorker | None = None
+        self._imported_ids: list[str] = []
+        self._import_errors: list[str] = []
+        self._import_cancelled = False
 
         self.pipeline = Pipeline(self.settings)
         self.hotkey = HotkeyManager(
@@ -648,15 +755,20 @@ class VoxApp(QObject):
         self._stats_window.activateWindow()
 
     def open_recordings(self) -> None:
-        """Ouvre (ou ramene au premier plan) l'historique des enregistrements."""
+        """Ouvre (ou ramene au premier plan) la bibliotheque."""
         if self._recordings_window is None:
             window = RecordingsWindow(self.settings)
             window.copy_requested.connect(self.pipeline.copy_text)
             window.insert_requested.connect(self.pipeline.insert_text)
             window.retranscribe_requested.connect(self.pipeline.retranscribe)
             window.delete_requested.connect(self._delete_recording)
-            # Retour vers les reglages depuis l'historique : le dialogue prend
-            # la fenetre d'historique comme parent, pour s'ouvrir par-dessus.
+            window.import_requested.connect(self.start_import)
+            window.import_cancel_requested.connect(self.cancel_import)
+            window.import_retranscribe_requested.connect(self.retranscribe_import)
+            window.import_delete_requested.connect(self._delete_import)
+            window.names_requested.connect(self.suggest_names)
+            # Retour vers les reglages depuis la bibliotheque : le dialogue prend
+            # la fenetre comme parent, pour s'ouvrir par-dessus.
             window.settings_requested.connect(
                 lambda: self.open_settings(parent=self._recordings_window)
             )
@@ -666,6 +778,157 @@ class VoxApp(QObject):
         self._recordings_window.show()
         self._recordings_window.raise_()
         self._recordings_window.activateWindow()
+
+    # ------------------------------------------------------------------
+    # Import de fichiers audio
+    # ------------------------------------------------------------------
+    def start_import(self, paths: list[str], replace_id: str = "") -> None:
+        """Lance l'import de fichiers audio (ou la retranscription d'une entree)."""
+        paths = [str(path) for path in (paths or []) if path]
+        if not paths and not replace_id:
+            return
+        if not self.settings.effective_key:
+            self._on_notice("error", "Clé OpenRouter manquante : ouvre les réglages.")
+            self.open_settings()
+            return
+        if self._import_worker is not None and self._import_worker.isRunning():
+            self._on_notice("info", "Un import est déjà en cours.")
+            return
+        if self.pipeline.recording or self.pipeline.busy:
+            self._on_notice("info", "Termine la dictée en cours avant d'importer.")
+            return
+
+        self._imported_ids = []
+        self._import_errors = []
+        self._import_cancelled = False
+        worker = _ImportWorker(paths, self.settings, replace_id=replace_id, parent=self)
+        worker.progress.connect(self._on_import_progress)
+        worker.imported.connect(self._on_imported)
+        worker.replaced.connect(self._on_import_replaced)
+        worker.failed.connect(self._on_import_failed)
+        worker.cancelled.connect(self._on_import_cancelled)
+        worker.finished.connect(self._on_import_finished)
+        self._import_worker = worker
+
+        label = "Retranscription…" if replace_id else f"Import : {Path(paths[0]).name}"
+        if self._recordings_window is not None:
+            self._recordings_window.set_import_running(True, label)
+        self.overlay.show_pill()
+        self.overlay.set_state("transcribing", detail=label)
+        self.tray.set_status("Import…")
+        worker.start()
+
+    def cancel_import(self) -> None:
+        if self._import_worker is not None and self._import_worker.isRunning():
+            self._import_worker.stop()
+            if self._recordings_window is not None:
+                self._recordings_window.progress_label.setText("Annulation…")
+
+    def retranscribe_import(self, entry_id: str) -> None:
+        entry = library.get(entry_id)
+        if entry is None:
+            return
+        if not entry.exists:
+            self._on_notice("error", "Fichier d'origine introuvable : impossible de retranscrire.")
+            if self._recordings_window is not None:
+                self._recordings_window.on_import_updated(entry_id)
+            return
+        self.start_import([entry.source], replace_id=entry_id)
+
+    def _on_import_progress(self, done: int, total: int, message: str) -> None:
+        if self._recordings_window is not None:
+            self._recordings_window.set_import_progress(done, total, message)
+        if message:
+            self.overlay.set_state("transcribing", detail=message)
+
+    def _on_imported(self, entry_id: str) -> None:
+        self._imported_ids.append(entry_id)
+        if self._recordings_window is not None:
+            self._recordings_window.on_imported(entry_id)
+
+    def _on_import_replaced(self, entry_id: str) -> None:
+        if self._recordings_window is not None:
+            self._recordings_window.on_import_updated(entry_id)
+
+    def _on_import_failed(self, path: str, message: str) -> None:
+        log.warning("Import en echec (%s) : %s", path, message)
+        self._import_errors.append(message)
+        if self._recordings_window is not None:
+            self._recordings_window.on_import_failed(path)
+        self.tray.showMessage(
+            "Vox — import impossible",
+            f"{Path(path).name} : {message}",
+            QSystemTrayIcon.Warning,
+            8000,
+        )
+
+    def _on_import_cancelled(self) -> None:
+        self._import_cancelled = True
+
+    def _on_import_finished(self) -> None:
+        self._import_worker = None
+        if self._recordings_window is not None:
+            self._recordings_window.set_import_running(False)
+        self.tray.set_status("Prêt")
+        if self._import_cancelled:
+            self._on_notice("info", "Import annulé.")
+        elif self._import_errors and not self._imported_ids:
+            self._on_notice("error", f"Import impossible : {self._import_errors[0]}")
+        elif self._import_errors:
+            self._on_notice(
+                "info",
+                f"Import terminé, {len(self._import_errors)} fichier(s) en échec.",
+            )
+        elif self._imported_ids:
+            count = len(self._imported_ids)
+            message = f"Import terminé : {count} fichier(s) transcrit(s)."
+            self._on_notice("info", message)
+            self.tray.showMessage(
+                "Vox — import terminé",
+                "Ouvre la bibliothèque pour relire et nommer les locuteurs.",
+                QSystemTrayIcon.Information,
+                6000,
+            )
+
+    def _delete_import(self, entry_id: str) -> None:
+        library.delete(entry_id)
+        if self._recordings_window is not None:
+            self._recordings_window.on_import_deleted(entry_id)
+
+    def suggest_names(self, entry_id: str) -> None:
+        """Demande au modele de conversation de retrouver qui parle."""
+        if self._names_worker is not None and self._names_worker.isRunning():
+            self._on_notice("info", "Une analyse est déjà en cours.")
+            return
+        worker = _NamesWorker(entry_id, self.settings, parent=self)
+        worker.done.connect(self._on_names_done)
+        worker.failed.connect(self._on_names_failed)
+        worker.finished.connect(self._clear_names_worker)
+        self._names_worker = worker
+        self.overlay.show_pill()
+        self.overlay.set_state("rewording", detail="Recherche des prénoms…")
+        self.tray.set_status("Analyse…")
+        worker.start()
+
+    def _clear_names_worker(self) -> None:
+        self._names_worker = None
+        self.tray.set_status("Prêt")
+
+    def _on_names_done(self, entry_id: str, mapping) -> None:
+        mapping = mapping or {}
+        if self._recordings_window is not None:
+            self._recordings_window.on_names_applied(entry_id, mapping)
+        if mapping:
+            names = ", ".join(f"{label} → {name}" for label, name in mapping.items())
+            self._on_notice("info", f"Prénoms proposés : {names}")
+        else:
+            self._on_notice("info", "Aucun prénom identifié avec certitude.")
+
+    def _on_names_failed(self, entry_id: str, message: str) -> None:
+        log.warning("Analyse des prenoms impossible : %s", message)
+        if self._recordings_window is not None:
+            self._recordings_window.on_names_failed(entry_id, message)
+        self._on_notice("error", f"Analyse impossible : {message}")
 
     def _delete_recording(self, audio: str) -> None:
         recordings.delete(audio)
@@ -746,6 +1009,11 @@ class VoxApp(QObject):
         self._clock_timer.stop()
         self._update_timer.stop()
         self.hotkey.stop()
+        for worker in (self._import_worker, self._names_worker):
+            if worker is not None and worker.isRunning():
+                if isinstance(worker, _ImportWorker):
+                    worker.stop()
+                worker.wait(3000)
         self.pipeline.shutdown()
         self.tray.hide()
         self.qapp.quit()
