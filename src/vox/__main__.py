@@ -32,6 +32,7 @@ def main() -> int:
         "--test-key",
         "--transcribe",
         "--import",
+        "--clean-transcript",
         "--stats",
         "--uninstall",
         "--where",
@@ -168,6 +169,35 @@ def main_cli() -> int:
         default=0,
         metavar="N",
         help="nombre de personnes dans la conversation (aide le raccord des locuteurs)",
+    )
+    parser.add_argument(
+        "--clean-transcript",
+        metavar="FICHIER_JSON",
+        help="corrige un transcript deja produit (ponctuation, repetitions, noms propres)",
+    )
+    parser.add_argument(
+        "--clean-model",
+        default="",
+        metavar="MODELE",
+        help="modele de correction (defaut : le modele de conversation des reglages)",
+    )
+    parser.add_argument(
+        "--clean-glossary",
+        default="",
+        metavar="TERMES",
+        help="orthographe a respecter : « Khalis (et non Calis), Elivia, Bigard »",
+    )
+    parser.add_argument(
+        "--clean-context",
+        default="",
+        metavar="PHRASE",
+        help="une phrase de contexte (sujet de l'echange, qui parle a qui)",
+    )
+    parser.add_argument(
+        "--clean-out",
+        default="",
+        metavar="DOSSIER",
+        help="dossier de sortie (defaut : a cote du fichier)",
     )
     parser.add_argument("--version", action="store_true")
     args = parser.parse_args()
@@ -317,7 +347,73 @@ def main_cli() -> int:
     if args.import_file:
         return _import_command(args)
 
+    if args.clean_transcript:
+        return _clean_command(args)
+
     parser.print_help()
+    return 0
+
+
+def _clean_command(args) -> int:
+    """`vox --clean-transcript` : correction editoriale d'un transcript existant."""
+    import json
+    from pathlib import Path
+
+    from . import config as config_module
+    from .api import Client
+    from .cleanup import clean_transcript
+    from .transcript import Transcript
+
+    source = Path(args.clean_transcript).expanduser()
+    if not source.exists():
+        print(f"Fichier introuvable : {source}")
+        return 1
+    settings = config_module.load()
+    key = config_module.key_for("openrouter", settings)
+    if not key:
+        print("Aucune clé OpenRouter : la correction passe par un modèle de conversation.")
+        return 1
+
+    try:
+        transcript = Transcript.from_dict(json.loads(source.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        print(f"Transcript illisible : {exc}")
+        return 1
+
+    model = args.clean_model or settings.chat_model
+    print(f"Correction : {source.name} — {len(transcript.segments)} segments, modèle {model}")
+
+    def on_progress(index: int, total: int) -> None:
+        print(f"  bloc {index}/{total}")
+
+    try:
+        with Client("openrouter", key, timeout=600.0) as client:
+            report = clean_transcript(
+                transcript,
+                client,
+                model,
+                glossary=args.clean_glossary,
+                context=args.clean_context,
+                progress=on_progress,
+            )
+    except Exception as exc:
+        print(f"Échec : {exc}")
+        return 1
+
+    target_dir = Path(args.clean_out).expanduser() if args.clean_out else source.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+    base = target_dir / f"{source.stem} (corrigé)"
+    base.with_suffix(".md").write_text(transcript.to_markdown(), encoding="utf-8")
+    base.with_suffix(".txt").write_text(transcript.to_text(with_time=True), encoding="utf-8")
+    base.with_suffix(".json").write_text(
+        json.dumps(transcript.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(
+        f"\n  Blocs          : {report['blocs']} ({report['blocs_en_echec']} en échec)"
+        f"\n  Segments revus : {report['segments_modifies']}/{len(transcript.segments)}"
+        f"\n  Coût           : {report.get('cout', 0.0):.4f} $"
+        f"\n  Fichiers       : {base.name}.md, .txt, .json ({target_dir})"
+    )
     return 0
 
 
