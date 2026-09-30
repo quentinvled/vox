@@ -18,27 +18,29 @@ Conventions :
 | 1.3 | Modèle de transcript, fusion des tranches, raccord des locuteurs, exports (`src/vox/transcript.py`) | [x] |
 | 1.4 | Options de diarisation par fournisseur + `verbose_json` (`src/vox/api.py`) | [x] |
 | 1.5 | Orchestration complète et ligne de commande (`src/vox/imports.py`, `vox --import`) | [x] |
-| 1.6 | Tests (33) : découpage, routeur, fusion, exports, import de bout en bout | [x] |
-| 1.7 | Passe LLM de fusion des locuteurs (sur-découpage entre tranches) | [ ] |
+| 1.6 | Tests (42) : découpage, routeur, fusion, exports, import de bout en bout, raccord locuteurs | [x] |
+| 1.7 | Passe LLM de fusion des locuteurs (sur-découpage entre tranches) | [x] |
 | 1.8 | Stockage : transcript dans la bibliothèque (index + fichiers) | [ ] |
 | 1.9 | UI : bouton Importer, progression, transcript cliquable, renommage, export | [ ] |
 
-**Test n°1 (à faire par Quentin, Windows)** — vérifier la qualité avant de
-construire l'UI dessus :
+**Test n°1 (en cours, VPS)** — premier essai réel le 30/09 sur un appel de
+33 min à 3 personnes (`Call KH Route.m4a`, 97 min au total dont seules les
+33 premières minutes utiles) :
 
-```powershell
-uv sync
-# 1) A/B des modèles sur un vrai fichier, en regardant le coût affiché :
-uv run vox --import "C:\chemin\appel.m4a"                              # MAI-Transcribe 2 (défaut)
-uv run vox --import "C:\chemin\appel.m4a" --import-model x-ai/grok-stt-1.0
-uv run vox --import "C:\chemin\appel.m4a" --import-model google/gemini-3.5-transcribe
-# 2) Un vocal WhatsApp mono (doit donner un seul locuteur, sans sur-découpage)
-# 3) Un appel à 4-5 personnes (vérifier sur-découpage puis fusion)
-```
+- `mai-transcribe-2` : 33 min transcrites et diarisées en **18 s**, coût
+  **0,055 $**, 300 segments, aucune erreur ;
+- le raccord par recouvrement seul produisait 8 étiquettes ; la passe LLM
+  (avec `--import-speakers 3`) retrouve les **3 personnes**, labels cohérents
+  de bout en bout ;
+- limite découverte : `mai-transcribe-2` refuse les entrées > ~7-8 Mo
+  (400 « does not support large audio inputs ») → encodage mp3 96 kb/s et
+  tranches de 12 min (le flac plafonnait à 7 min) ;
+- les deux canaux de ce fichier portent le même son (corrélation 0,85,
+  co-activité 0,95) → diarisation du mix, pas de séparation par canal.
 
-À regarder : fidélité du français, justesse des attributions, nombre de
-locuteurs détectés, coût réel, durée. Les résultats sont écrits en `.md` et
-`.json` à côté du fichier source (ou dans `--import-out`).
+À vérifier par Quentin : orthographe des noms propres (« Calis »), pertinence
+du 3ᵉ locuteur (il apparaît à 11:49), et s'il faut un autre modèle pour les
+noms (Gemini Transcribe, ~0,22 $ pour 33 min).
 
 ## Lot 2 — Enregistrer (Windows)
 
@@ -89,12 +91,17 @@ l'agent.
 
 ## Journal
 
+- **30/09/2026** — premier import réel (appel KH Route, 33 min, 3 personnes) :
+  18 s, 0,055 $, 3 locuteurs après la passe LLM de raccord (8 sans elle).
+  Corrections issues du terrain : limite de taille de `mai-transcribe-2`
+  (mp3 12 min), profil des canaux (co-activité), options `--import-limit`,
+  `--import-codec`, `--import-speakers`. 42 tests.
 - **29/09/2026** — Lot 1 (étapes 1.1 à 1.6) implémenté : routeur, découpage aux
   silences, diarisation via OpenRouter, fusion des tranches, exports, CLI
   `vox --import`, 33 tests. Décision par défaut : `microsoft/mai-transcribe-2`
   (0,10 $/h) ; alternatives Grok et Gemini Transcribe testables via
   `--import-model`. `imageio-ffmpeg` ajouté aux dépendances (ffmpeg embarqué,
-  rien à installer). Prochaine étape après le test n°1 : 1.7 puis 1.8-1.9.
+  rien à installer).
 
 ## Points de vigilance
 
