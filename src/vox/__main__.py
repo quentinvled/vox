@@ -32,6 +32,7 @@ def main() -> int:
         "--test-key",
         "--transcribe",
         "--import",
+        "--library",
         "--clean-transcript",
         "--name-speakers",
         "--rename-speakers",
