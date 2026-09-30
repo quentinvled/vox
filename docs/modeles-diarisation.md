@@ -1,8 +1,8 @@
-# Diarisation et modèles STT (référence, non implémenté)
+# Diarisation et modèles STT (référence)
 
-Relevé le **29/09/2026** — les prix et modèles bougent, revérifier avant de
-décider. Voir aussi [`assistant-audio.md`](assistant-audio.md) pour la partie
-produit.
+Relevé le **29/09/2026**, complété par les **mesures du 30/09/2026** (section 10).
+Les prix et modèles bougent, revérifier avant de décider. Voir aussi
+[`assistant-audio.md`](assistant-audio.md) pour la partie produit.
 
 ## 1. Ce que sait faire l'API OpenRouter
 
@@ -26,6 +26,11 @@ Endpoint : `POST https://openrouter.ai/api/v1/audio/transcriptions` (base
   `/api/v1/models/<id>/endpoints`). Les paramètres normalisés (`language`,
   `temperature`, `response_format`, `timestamp_granularities`) restent à la
   racine. Certains fournisseurs filtrent les options inconnues en silence.
+- **Plafond de poids par requête** (mesuré le 30/09) : au-delà d'environ 7-8 Mo,
+  l'API répond `400 — The selected model does not support large audio inputs`,
+  quel que soit le modèle. En pratique : flac 16 kHz mono ≈ 7 min max, mp3
+  96 kb/s ≈ 14 min. C'est pour ça que Vox découpe en tranches de 10-12 min et
+  **préfère le mp3 par défaut**.
 - `usage.cost` est renvoyé : **c'est la source de vérité pour le coût réel**.
 - Découverte des modèles : `GET /api/v1/models?output_modalities=transcription`.
 - Pas de streaming : l'endpoint est requête/réponse. Pour du live, découper.
@@ -79,13 +84,13 @@ Exemple diarisation Azure (MAI-Transcribe 2) :
 
 | Modèle | Option fournisseur | Limites connues | $/h |
 |---|---|---|---|
-| `x-ai/grok-stt-1.0` (tag `xai`) | `diarize`, multicanal, `keyterm` | long fichier OK (à tester) | **0,10** |
+| `x-ai/grok-stt-1.0` (tag `xai`) | `diarize`, multicanal, `keyterm` | ❌ **mesuré 30/09 : aucun locuteur via OpenRouter** (1 segment global) → texte seul | **0,10** |
 | `microsoft/mai-transcribe-2` (tag `azure`) | `diarization.enabled` | **bug : 503 au-delà de ~32 min avec diarisation** ; 60 langues, #1 FLEURS | **0,10** |
 | `meta/muse-voice-transcribe-1.0` (tag `meta`) | speaker-aware | — | 0,18 |
 | `assemblyai/universal-3-5-pro` (tag `assemblyai`) | Sync API | **120 s max par clip** ; promo 50 % signalée | 0,23 |
 | `deepgram/nova-3` (tag `deepgram`) | `diarize` (+ `punctuate`, `smart_format`) | diarisation incluse en batch | 0,26 |
 | `fish-audio/transcribe-1-pro` (tag `fish-audio`) | locuteurs inline dans le texte | — | 0,36 |
-| `google/gemini-3.5-transcribe` (tag `google-ai-studio`) | diarisation native | **30 min max avec diarisation** (1 h sans) ; 8 locuteurs | ~0,40 |
+| `google/gemini-3.5-transcribe` (tag `google-ai-studio`) | diarisation native | ❌ **mesuré 30/09 : aucun locuteur via OpenRouter**, 1 segment global ; 30 min max documenté | ~0,40 |
 | `google/chirp-3` (tag `google-vertex`) | diarisation | — | 0,96 |
 
 Détails utiles :
@@ -171,14 +176,46 @@ Mesurer pour chacun : `usage.cost` réel, temps de traitement, qualité
 d'attribution des locuteurs (à l'œil), et tenue du français. C'est ce test qui
 tranche, pas les benchmarks.
 
+Premier passage réel effectué le 30/09 sur un appel à 3 personnes (voir
+section 10) : il a éliminé Grok et Gemini pour la diarisation et confirmé MAI
+Transcribe 2 + Deepgram. Il reste à tester un vocal WhatsApp et une réunion
+4-5 personnes.
+
 ## 9. Notes d'intégration dans Vox
 
 - `src/vox/api.py` : le client STT existe déjà (OpenRouter JSON base64 +
-  fournisseurs OpenAI-compatibles). À ajouter : `response_format`,
-  `timestamp_granularities`, `provider.options` (diarisation), et un mode
-  « tranches ».
+  fournisseurs OpenAI-compatibles) avec `response_format`,
+  `timestamp_granularities` et `provider.options` (diarisation) ; voir aussi
+  `NO_DIARIZATION_MODELS` (modèles mesurés comme non diarisants).
+- `src/vox/imports.py` : découpage aux silences, repli de conteneur (mp3 puis
+  wav), repli automatique sur mp3 si le fichier est trop lourd.
 - `PROMPT_AWARE_PROVIDERS` : liste des fournisseurs qui acceptent `prompt` —
   étendre la même logique pour les options de diarisation par `tag`.
 - `per_hour_from_catalogue()` : gère déjà l'ambiguïté des unités du catalogue.
-- Le modèle de diarisation doit être distinct du modèle de dictée (réglage
-  séparé, défaut automatique).
+- Le modèle de diarisation est distinct du modèle de dictée (réglage séparé,
+  défaut automatique) : Réglages → Traitement → « Imports audio ».
+
+## 10. Mesures du 30/09/2026 (appel réel, 3 personnes)
+
+Fichier : appel de 97 min, seules les 33 premières minutes traitées ; les deux
+canaux portent le même son (diarisation du mix).
+
+| Modèle | Extrait | Résultat | Coût |
+|---|---|---|---|
+| `microsoft/mai-transcribe-2` | 33 min, mp3 96k, 3 tranches | **300 segments, 18 s**, 3 locuteurs après raccord LLM (8 sans) | **0,055 $** |
+| `deepgram/nova-3` | 10 min, mp3 | 2 locuteurs, 123 segments, 10 s — cohérent avec MAI | 0,043 $ |
+| `x-ai/grok-stt-1.0` | 2 min puis 10 min | **1 segment global, aucun locuteur** même avec `diarize` ; 160 mots pour 10 min | 0,017 $ |
+| `google/gemini-3.5-transcribe` | 2 min puis 10 min | **1 segment global, aucun locuteur** ; `diarization: true` → HTTP 400, `diarization.enabled` ignoré | 0,030 $ |
+
+Conséquences appliquées dans Vox :
+
+- défaut de diarisation : **MAI Transcribe 2** (0,10 $/h) ; alternative :
+  **Deepgram Nova-3** (0,26 $/h, bon repli) ;
+- Grok STT et Gemini Transcribe sont utilisables **en texte seul** : Vox le dit
+  dans les avertissements du transcript au lieu de laisser croire à une
+  diarisation ;
+- les fournisseurs peuvent ignorer une option inconnue : ne jamais se fier au
+  fait qu'un 400 ne soit pas remonté.
+
+Reste à faire (protocole section 8) : un vocal WhatsApp 1 voix, et une réunion
+4-5 personnes en deux pistes.

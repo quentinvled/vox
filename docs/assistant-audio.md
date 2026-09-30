@@ -105,6 +105,13 @@ La fenêtre d'historique existante évolue (mêmes widgets, mêmes boutons) :
 - Nom automatique proposé : `Appel WhatsApp — 29/09 14:32` (modifiable).
 - Bouton « Proposer les prénoms » (LLM), prénoms mémorisés par contact.
 
+**Implémenté le 30/09/2026** (étapes 1.8 et 1.9) : les filtres existent pour
+Tout / Dictées / Imports (Notes et Appels viendront avec leurs lots), le
+transcript est cliquable, les locuteurs se renomment et se fusionnent,
+« Proposer les prénoms » et les exports sont branchés. Le fichier importé n'est
+pas copié : la bibliothèque stocke l'index et le transcript JSON. Mémorisation
+des prénoms par contact : pas encore.
+
 ## 7. Appels à plusieurs participants
 
 Fait à connaître : **l'appli d'appel mixe tous les interlocuteurs distants en une
@@ -154,6 +161,10 @@ Composants réutilisés :
 - Règles : aucun modal bloquant, toute opération annulable, erreurs = une ligne
   discrète + « Réessayer », tout ce qui est technique rangé dans
   **Réglages → Traitement**, en `Automatique` par défaut.
+
+L'onglet **Réglages → Traitement** existe depuis le 30/09/2026 : modèle
+d'import, taille des tranches, tranches en parallèle, raccord LLM des
+locuteurs.
 
 ## 10. Packaging Windows (`Vox.spec`)
 

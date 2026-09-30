@@ -191,6 +191,7 @@ class SettingsWindow(QDialog):
         self.tabs.addTab(self._scrollable(self._build_audio()), "Audio")
         self.tabs.addTab(self._scrollable(self._build_output()), "Sortie")
         self.tabs.addTab(self._scrollable(self._build_reword()), "Reformulation")
+        self.tabs.addTab(self._scrollable(self._build_processing()), "Traitement")
         self._updates_tab_index = self.tabs.addTab(
             self._scrollable(self._build_updates()), "Mises à jour"
         )
@@ -600,6 +601,69 @@ class SettingsWindow(QDialog):
         outer.addStretch(1)
         return page
 
+    def _build_processing(self) -> QWidget:
+        """Réglages techniques des imports : tout est automatique par défaut."""
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(4, 12, 4, 4)
+
+        box = QGroupBox("Imports audio (réunions, appels, vocaux)")
+        form = QFormLayout(box)
+
+        self.diarization_combo = NoWheelComboBox()
+        self.diarization_combo.setMinimumWidth(280)
+        for value, label in (
+            ("", "Automatique (MAI Transcribe 2)"),
+            ("microsoft/mai-transcribe-2", "MAI Transcribe 2 — recommandé"),
+            ("deepgram/nova-3", "Deepgram Nova-3"),
+            ("google/gemini-3.5-transcribe", "Gemini 3.5 Transcribe (texte seul)"),
+            ("x-ai/grok-stt-1.0", "Grok STT (texte seul, sans locuteurs)"),
+        ):
+            self.diarization_combo.addItem(label, value)
+        self.diarization_combo.setToolTip(
+            "Modèle utilisé pour transcrire et séparer les locuteurs d'un "
+            "fichier importé. « Automatique » suit les recommandations de Vox."
+        )
+        form.addRow("Modèle d'import", self.diarization_combo)
+
+        self.chunk_spin = NoWheelSpinBox()
+        self.chunk_spin.setRange(0, 1500)
+        self.chunk_spin.setSuffix(" s")
+        self.chunk_spin.setSpecialValueText("automatique")
+        self.chunk_spin.setToolTip(
+            "Durée visée des morceaux envoyés à l'API. Vox découpe aux silences "
+            "autour de cette valeur. Réduis-la si un modèle refuse les fichiers "
+            "trop lourds. 0 = valeurs conseillées par modèle."
+        )
+        form.addRow("Taille des tranches", self.chunk_spin)
+
+        self.parallel_spin = NoWheelSpinBox()
+        self.parallel_spin.setRange(1, 6)
+        form.addRow("Tranches en parallèle", self.parallel_spin)
+
+        self.merge_speakers_check = QCheckBox(
+            "Raccorder les locuteurs entre tranches (passe LLM)"
+        )
+        self.merge_speakers_check.setToolTip(
+            "Quand un fichier est découpé, chaque tranche a ses propres "
+            "étiquettes de locuteurs : une passe de modèle les raccorde. "
+            "Désactive-la pour économiser quelques centimes, au prix de "
+            "locuteurs en double (fusionnables à la main dans la bibliothèque)."
+        )
+        form.addRow("", self.merge_speakers_check)
+        outer.addWidget(box)
+
+        hint = QLabel(
+            "Ces réglages ne concernent que les fichiers importés (bouton "
+            "« Importer » de la bibliothèque, commande vox --import). La dictée "
+            "garde ses propres modèles, dans l'onglet Général."
+        )
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        outer.addWidget(hint)
+        outer.addStretch(1)
+        return page
+
     def _build_updates(self) -> QWidget:
         page = QWidget()
         outer = QVBoxLayout(page)
@@ -958,6 +1022,17 @@ class SettingsWindow(QDialog):
         self.custom_prompt_edit.setPlainText(settings.reword_custom_prompt)
         self._sync_reword_state()
 
+        if settings.diarization_model and self.diarization_combo.findData(
+            settings.diarization_model
+        ) < 0:
+            self.diarization_combo.addItem(
+                settings.diarization_model, settings.diarization_model
+            )
+        self._select_data(self.diarization_combo, settings.diarization_model)
+        self.chunk_spin.setValue(int(settings.import_chunk_seconds or 0))
+        self.parallel_spin.setValue(max(1, int(settings.import_parallel or 3)))
+        self.merge_speakers_check.setChecked(settings.import_merge_speakers)
+
     def _selected_hotkey(self) -> str:
         """Combinaison retenue, en tenant compte du mode personnalise."""
         data = self.hotkey_combo.currentData()
@@ -1025,6 +1100,10 @@ class SettingsWindow(QDialog):
             reword_tone=self.tone_combo.currentData(),
             reword_custom_prompt=self.custom_custom_text(),
             typing_wpm=float(self.typing_spin.value()),
+            diarization_model=self.diarization_combo.currentData() or "",
+            import_chunk_seconds=int(self.chunk_spin.value()),
+            import_parallel=int(self.parallel_spin.value()),
+            import_merge_speakers=self.merge_speakers_check.isChecked(),
         )
 
     def custom_custom_text(self) -> str:

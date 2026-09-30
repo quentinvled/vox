@@ -117,6 +117,27 @@ def test_import_progress_row_appears(qapp, tmp_path: Path) -> None:
         window.deleteLater()
 
 
+def test_settings_processing_tab_roundtrip(qapp, tmp_path: Path) -> None:
+    from vox import models
+    from vox.ui.settings_window import SettingsWindow
+
+    settings = Settings(
+        diarization_model="deepgram/nova-3",
+        import_chunk_seconds=480,
+        import_parallel=2,
+        import_merge_speakers=False,
+    )
+    window = SettingsWindow(settings, models.fallback("openrouter"))
+    try:
+        values = window.values()
+        assert values.diarization_model == "deepgram/nova-3"
+        assert values.import_chunk_seconds == 480
+        assert values.import_parallel == 2
+        assert values.import_merge_speakers is False
+    finally:
+        window.deleteLater()
+
+
 # ----------------------------------------------------------------------
 # Workers
 # ----------------------------------------------------------------------

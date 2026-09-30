@@ -20,8 +20,8 @@ Conventions :
 | 1.5 | Orchestration complète et ligne de commande (`src/vox/imports.py`, `vox --import`) | [x] |
 | 1.6 | Tests (42) : découpage, routeur, fusion, exports, import de bout en bout, raccord locuteurs | [x] |
 | 1.7 | Passe LLM de fusion des locuteurs (sur-découpage entre tranches) | [x] |
-| 1.8 | Stockage : transcript dans la bibliothèque (index + fichiers) | [ ] |
-| 1.9 | UI : bouton Importer, progression, transcript cliquable, renommage, export | [ ] |
+| 1.8 | Stockage : transcript dans la bibliothèque (index + fichiers) | [x] |
+| 1.9 | UI : bouton Importer, progression, transcript cliquable, renommage, export | [x] |
 | 1.10 | Nettoyage éditorial d'un transcript (`vox --clean-transcript`, contexte + glossaire) | [x] |
 | 1.11 | Prénoms des locuteurs : déduction LLM (`--name-speakers`) et renommage explicite (`--rename-speakers`) | [x] |
 
@@ -43,6 +43,20 @@ Conventions :
 À vérifier par Quentin : orthographe des noms propres (« Calis »), pertinence
 du 3ᵉ locuteur (il apparaît à 11:49), et s'il faut un autre modèle pour les
 noms (Gemini Transcribe, ~0,22 $ pour 33 min).
+
+**Test n°1 bis (prêt, à faire sur Windows)** — la bibliothèque est désormais
+utilisable dans l'app : bouton **Importer**, progression dans la fenêtre,
+transcript **cliquable** (clic = écouter à partir de la réplique), pastilles de
+locuteur, renommage et fusion des locuteurs, « Proposer les prénoms », exports
+md/txt/srt/vtt/json, filtres Tout/Dictées/Imports. À vérifier : importer un
+vocal WhatsApp (1 voix, pas de diarisation attendue) et un appel à 2-3, puis
+renommer les locuteurs et exporter.
+
+Mesures du 30/09 en comparant les moteurs (voir
+[`modeles-diarisation.md`](modeles-diarisation.md) §10) : Deepgram trouve les
+mêmes 2 voix que MAI sur les 10 premières minutes ; **Grok et Gemini ne
+diarisent pas du tout via OpenRouter** (1 segment global, aucun locuteur) — ils
+restent utilisables en texte seul, avec un avertissement dans le transcript.
 
 ## Lot 2 — Enregistrer (Windows)
 
@@ -93,6 +107,22 @@ l'agent.
 
 ## Journal
 
+- **30/09/2026 (nuit)** — étapes 1.8 et 1.9 terminées : **bibliothèque** des
+  imports (index JSONL + transcript JSON, le fichier source n'est jamais copié
+  ni supprimé), écran Bibliothèque unifié (dictées + imports), bouton
+  **Importer** avec progression et annulation, transcript **cliquable**
+  (clic → lecture à partir de la réplique), pastilles de locuteur, renommage et
+  fusion, « Proposer les prénoms », exports md/txt/srt/vtt/json, filtres
+  Tout/Dictées/Imports, onglet **Réglages → Traitement** (modèle d'import,
+  taille des tranches, parallélisme, raccord LLM). CLI : `vox --import` range
+  désormais dans la bibliothèque (`--import-no-save` pour l'éviter) et
+  `vox --library` liste les imports. 73 tests, dont des tests Qt hors écran.
+- **30/09/2026 (soir)** — corrections issues du test réel : le **mp3 devient le
+  conteneur par défaut** (l'API plafonne le poids vers 7-8 Mo, pas la durée) et
+  un flac refusé pour cause de poids repart automatiquement en mp3, jamais en
+  wav ; Grok et Gemini mesurés **non diarisants** via OpenRouter (retirés de la
+  table de diarisation, avertissement dans le transcript) ; `deepgram/nova-3`
+  documenté (10 min de flac refusées, 10 min de mp3 acceptées).
 - **30/09/2026 (prénoms)** — étape 1.11 : détection des prénoms dans l'appel KH.
   « Jonas » est cité 5 fois, « Quentin » 1 fois (24:51), « Mikael » jamais dans
   les 33 premières minutes (déduit par élimination). L'inférence LLM avait
@@ -122,8 +152,12 @@ l'agent.
 ## Points de vigilance
 
 - Les modèles plafonnent : Gemini 30 min avec diarisation, MAI-Transcribe 2
-  ~32 min (bug connu). Le découpage à 10 min les contourne : ne pas le monter
-  sans test.
+  ~32 min (bug connu). Le découpage à 10-12 min les contourne : ne pas le monter
+  sans test. Limite de poids mesurée : ~7-8 Mo par requête, d'où le mp3 par
+  défaut.
+- Grok STT et Gemini Transcribe ne rendent **aucun locuteur** via OpenRouter
+  (mesuré le 30/09) : les choisir pour la diarisation ne produit qu'un
+  « Locuteur » unique, Vox l'affiche désormais en avertissement.
 - Une phrase à cheval sur une coupe est dédupliquée ; les locuteurs ne sont
   raccordés que si quelqu'un parle dans la zone de recouvrement (2,5 s). Sinon
   on sur-découpe volontairement : fusion en un clic (étape 1.7/1.9).

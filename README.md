@@ -103,9 +103,16 @@ uv run vox                 # lance l'application
 uv run vox --list-devices  # liste les micros
 uv run vox --stats         # statistiques en ligne de commande
 uv run vox --import appel.m4a                     # transcription + diarisation
+uv run vox --import appel.m4a --import-no-save    # export seul, sans bibliothèque
+uv run vox --library                              # liste les imports transcrits
 uv run vox --import appel.m4a --import-model x-ai/grok-stt-1.0
 uv run pytest              # tests
 ```
+
+Dans l'application, le bouton **Importer** de la Bibliothèque fait la même
+chose avec la progression à l'écran ; le transcript s'y relit réplique par
+réplique, les locuteurs s'y renomment, et les exports (md, txt, srt, vtt, json)
+se font en un clic.
 
 Construire les paquets :
 

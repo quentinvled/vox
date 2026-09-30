@@ -173,6 +173,16 @@ def main_cli() -> int:
         help="nombre de personnes dans la conversation (aide le raccord des locuteurs)",
     )
     parser.add_argument(
+        "--import-no-save",
+        action="store_true",
+        help="ne pas ranger l'import dans la bibliothèque (export seul)",
+    )
+    parser.add_argument(
+        "--library",
+        action="store_true",
+        help="liste la bibliothèque des imports (fichiers transcrits par Vox)",
+    )
+    parser.add_argument(
         "--clean-transcript",
         metavar="FICHIER_JSON",
         help="corrige un transcript deja produit (ponctuation, repetitions, noms propres)",
@@ -395,6 +405,9 @@ def main_cli() -> int:
     if args.import_file:
         return _import_command(args)
 
+    if args.library:
+        return _library_command()
+
     if args.clean_transcript:
         return _clean_command(args)
 
@@ -568,6 +581,27 @@ def _clean_command(args) -> int:
     return 0
 
 
+def _library_command() -> int:
+    """`vox --library` : liste les imports rangés dans la bibliothèque."""
+    from . import library
+
+    entries = library.load()
+    if not entries:
+        print("Bibliothèque vide : lance « vox --import fichier.m4a ».")
+        return 0
+    info = library.stats()
+    print(
+        f"{info['count']} import(s) · {info['seconds'] / 60:.0f} min · "
+        f"{info['cost']:.4f} $ cumulés"
+    )
+    for entry in entries:
+        speakers = f" · {entry.speakers_label()}" if entry.speakers else ""
+        status = "" if entry.status == "ok" else " · ÉCHEC"
+        print(f"  {entry.id}  {entry.duration_label():>9}{speakers}{status}")
+        print(f"      {entry.label} — {entry.source}")
+    return 0
+
+
 def _import_command(args) -> int:
     """`vox --import` : transcription + diarisation d'un fichier audio."""
     import json
@@ -647,6 +681,12 @@ def _import_command(args) -> int:
     for warning in transcript.warnings:
         print(f"  ! {warning}")
     print(f"\n  Fichiers : {', '.join(written)} ({target_dir})")
+
+    if not args.import_no_save:
+        from . import library
+
+        entry = library.add(transcript, source, elapsed=result.elapsed)
+        print(f"  Bibliothèque : {entry.id} (relire avec vox --library)")
     return 0
 
 
