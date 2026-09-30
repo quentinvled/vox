@@ -138,6 +138,52 @@ def test_settings_processing_tab_roundtrip(qapp, tmp_path: Path) -> None:
         window.deleteLater()
 
 
+def test_app_import_flow_end_to_end(qapp, monkeypatch, tmp_path: Path) -> None:
+    """Vrai VoxApp : import simulé → bibliothèque → sélection → export."""
+    import time
+
+    from PySide6.QtWidgets import QFileDialog
+
+    from vox import app as app_module
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "cle-de-test")
+    source = _source(tmp_path)
+    result = _fake_result(source)
+    monkeypatch.setattr("vox.app.process_file", lambda *_a, **_k: result)
+
+    vox = app_module.VoxApp(qapp)
+    try:
+        vox.open_recordings()
+        window = vox._recordings_window
+        assert window is not None
+
+        vox.start_import([str(source)])
+        deadline = time.time() + 10
+        while vox._import_worker is not None and time.time() < deadline:
+            qapp.processEvents()
+            time.sleep(0.02)
+        qapp.processEvents()
+        assert vox._import_worker is None
+
+        entries = library.load()
+        assert len(entries) == 1
+        assert window._current_import is not None
+        assert window._current_import.id == entries[0].id
+        assert window.segments_list.count() == 2
+
+        target = tmp_path / "export.md"
+        monkeypatch.setattr(
+            QFileDialog,
+            "getSaveFileName",
+            staticmethod(lambda *_a, **_k: (str(target), "")),
+        )
+        window._export_import("md")
+        assert target.exists()
+        assert "Locuteur 1" in target.read_text(encoding="utf-8")
+    finally:
+        vox.quit()
+
+
 # ----------------------------------------------------------------------
 # Workers
 # ----------------------------------------------------------------------
