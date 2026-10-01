@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import audiofiles, routing
 from .api import ApiError, Client, diarization_options, diarizes_by_default
+from .cleanup import clean_transcript
 from .config import DEFAULT_DIARIZATION_MODEL, Settings, key_for
 from .speakers import merge_speakers_with_llm
 from .transcript import ChunkResult, Transcript, assemble, segments_from_payload
@@ -322,6 +323,33 @@ def process_file(
 
 
 # ----------------------------------------------------------------------
+def clean_transcript_with_settings(
+    transcript: Transcript,
+    settings: Settings,
+    *,
+    progress: Callable[[int, int], None] | None = None,
+    cancel: threading.Event | None = None,
+) -> dict:
+    """Nettoyage editorial du transcript, avec la cle et le modele des reglages.
+
+    Leve une erreur si la cle manque ou si l'appel echoue : c'est a l'appelant
+    de decider, un nettoyage ne doit jamais faire echouer un import.
+    """
+    key = key_for("openrouter", settings)
+    if not key:
+        raise ApiError("Aucune clé OpenRouter pour le nettoyage.")
+    with Client("openrouter", key, timeout=600.0) as client:
+        return clean_transcript(
+            transcript,
+            client,
+            settings.chat_model,
+            glossary=settings.vocabulary_prompt,
+            progress=progress,
+            cancel=cancel,
+        )
+
+
+# ----------------------------------------------------------------------
 def _transcribe(
     client: Client,
     data: bytes,
@@ -379,5 +407,6 @@ __all__ = [
     "ImportCancelled",
     "ImportResult",
     "Progress",
+    "clean_transcript_with_settings",
     "process_file",
 ]

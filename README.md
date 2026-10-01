@@ -9,7 +9,9 @@ s'écrit tout seul dans la fenêtre active. Disponible sur **Windows** et
 
 Transcription via OpenRouter (Whisper, Qwen-ASR, Gemini…), nettoyage LLM
 actif par défaut (ton « Nettoyer », désactivable d'un clic dans la pilule),
-statistiques d'usage et historique audio local.
+statistiques d'usage et historique audio local. Les fichiers importés (appels,
+réunions, vocaux) sont transcrits, diarisés puis nettoyés automatiquement, avec
+transcript cliquable et export md/txt/srt/vtt/json.
 
 ## Télécharger
 

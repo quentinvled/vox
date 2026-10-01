@@ -64,12 +64,17 @@ def clean_transcript(
     context: str = "",
     progress: Callable[[int, int], None] | None = None,
     workers: int = 3,
+    cancel: threading.Event | None = None,
 ) -> dict:
     """Reecrit le texte des segments. Renvoie un compte-rendu (pour l'UI).
 
     Les blocs partent en parallele ; un bloc dont la reponse est illisible
     (JSON tronque par la limite de sortie du modele) est recoupe en deux et
     retente, jusqu'a garder le texte d'origine si c'est vraiment impossible.
+
+    `cancel` (facultatif) interrompt le nettoyage entre deux blocs : les
+    remplacements deja obtenus ne sont pas appliques (le transcript reste
+    brut), et le compte-rendu porte `annule: True`.
     """
     blocks = _blocks(transcript.segments)
     total = len(blocks)
@@ -77,6 +82,7 @@ def clean_transcript(
     failed = 0
     cost = 0.0
     done = 0
+    cancelled = False
     lock = threading.Lock()
 
     def handle(block: list[int]) -> tuple[dict[int, str], float]:
@@ -96,6 +102,10 @@ def clean_transcript(
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = [pool.submit(handle, block) for block in blocks]
         for future in futures:
+            if cancel is not None and cancel.is_set():
+                cancelled = True
+                pool.shutdown(wait=True, cancel_futures=True)
+                break
             found, spent = future.result()
             with lock:
                 replacements.update(found)
@@ -105,6 +115,18 @@ def clean_transcript(
                 done += 1
                 if progress is not None:
                     progress(done, total)
+
+    if cancelled:
+        report = {
+            "blocs": total,
+            "segments_modifies": 0,
+            "blocs_en_echec": 0,
+            "modele": model,
+            "cout": round(cost, 6),
+            "annule": True,
+        }
+        transcript.extras["nettoyage"] = report
+        return report
 
     changed = apply_replacements(transcript, replacements)
     report = {

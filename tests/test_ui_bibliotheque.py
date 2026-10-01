@@ -127,6 +127,7 @@ def test_settings_processing_tab_roundtrip(qapp, tmp_path: Path) -> None:
         import_chunk_seconds=480,
         import_parallel=2,
         import_merge_speakers=False,
+        clean_imports=False,
     )
     window = SettingsWindow(settings, models.fallback("openrouter"))
     try:
@@ -135,6 +136,7 @@ def test_settings_processing_tab_roundtrip(qapp, tmp_path: Path) -> None:
         assert values.import_chunk_seconds == 480
         assert values.import_parallel == 2
         assert values.import_merge_speakers is False
+        assert values.clean_imports is False
     finally:
         window.deleteLater()
 
@@ -259,7 +261,9 @@ def test_import_worker_replaces_transcript(monkeypatch, tmp_path: Path) -> None:
     result.transcript = improved
     monkeypatch.setattr("vox.app.process_file", lambda *_a, **_k: result)
 
-    worker = _ImportWorker([str(source)], Settings(), replace_id=entry.id)
+    worker = _ImportWorker(
+        [str(source)], Settings(clean_imports=False), replace_id=entry.id
+    )
     replaced: list[str] = []
     worker.replaced.connect(replaced.append)
     worker.run()
@@ -269,6 +273,91 @@ def test_import_worker_replaces_transcript(monkeypatch, tmp_path: Path) -> None:
     assert stored is not None and len(stored.segments) == 3
     updated = library.get(entry.id)
     assert updated is not None and updated.words == 10
+
+
+def test_import_worker_cleans_by_default(monkeypatch, tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    result = _fake_result(source)
+    reports: list[dict] = []
+
+    def _fake_clean(transcript, *_args, **_kwargs):
+        for segment in transcript.segments:
+            segment.text = "Nettoyé."
+        report = {
+            "blocs": 1,
+            "segments_modifies": len(transcript.segments),
+            "blocs_en_echec": 0,
+            "modele": "modele-test",
+            "cout": 0.004,
+        }
+        transcript.extras["nettoyage"] = report
+        reports.append(report)
+        return report
+
+    monkeypatch.setattr("vox.app.process_file", lambda *_a, **_k: result)
+    monkeypatch.setattr("vox.app.clean_transcript_with_settings", _fake_clean)
+
+    worker = _ImportWorker([str(source)], Settings())
+    imported: list[str] = []
+    worker.imported.connect(imported.append)
+    worker.run()
+
+    assert reports, "le nettoyage doit être lancé par défaut"
+    entry = library.get(imported[0])
+    assert entry is not None
+    assert entry.cost == pytest.approx(0.014)  # 0,01 STT + 0,004 nettoyage
+    assert entry.extras["nettoyage"]["cout"] == 0.004
+    stored = library.load_transcript(entry.id)
+    assert stored is not None and stored.segments[0].text == "Nettoyé."
+    raw = library.load_raw_copy(entry.id)
+    assert raw is not None
+    assert raw.segments[0].text == "Bonjour à tous."
+
+
+def test_import_worker_skips_cleaning_when_disabled(monkeypatch, tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    result = _fake_result(source)
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("le nettoyage ne doit pas être appelé")
+
+    monkeypatch.setattr("vox.app.process_file", lambda *_a, **_k: result)
+    monkeypatch.setattr("vox.app.clean_transcript_with_settings", _boom)
+
+    worker = _ImportWorker([str(source)], Settings(clean_imports=False))
+    imported: list[str] = []
+    worker.imported.connect(imported.append)
+    worker.run()
+
+    entry = library.get(imported[0])
+    assert entry is not None
+    assert entry.cost == pytest.approx(0.01)
+    assert library.load_raw_copy(entry.id) is None
+
+
+def test_import_worker_keeps_raw_when_cleaning_fails(monkeypatch, tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    result = _fake_result(source)
+
+    def _broken(*_args, **_kwargs):
+        raise RuntimeError("modèle indisponible")
+
+    monkeypatch.setattr("vox.app.process_file", lambda *_a, **_k: result)
+    monkeypatch.setattr("vox.app.clean_transcript_with_settings", _broken)
+
+    worker = _ImportWorker([str(source)], Settings())
+    imported: list[str] = []
+    worker.imported.connect(imported.append)
+    worker.run()
+
+    entry = library.get(imported[0])
+    assert entry is not None
+    assert entry.cost == pytest.approx(0.01)
+    stored = library.load_transcript(entry.id)
+    assert stored is not None
+    assert stored.segments[0].text == "Bonjour à tous."
+    assert any("Nettoyage ignoré" in warning for warning in stored.warnings)
+    assert library.load_raw_copy(entry.id) is None
 
 
 def test_names_worker_applies_mapping(monkeypatch, tmp_path: Path) -> None:

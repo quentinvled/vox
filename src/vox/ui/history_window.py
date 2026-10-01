@@ -762,6 +762,12 @@ class RecordingsWindow(QWidget):
             bits.append(entry.language.upper())
         if entry.cost:
             bits.append(format_money(entry.cost))
+        nettoyage = entry.extras.get("nettoyage") or {}
+        if nettoyage.get("annule"):
+            bits.append("nettoyage interrompu")
+        elif nettoyage:
+            cout = float(nettoyage.get("cout") or 0.0)
+            bits.append(f"nettoyé ({format_money(cout)})" if cout else "nettoyé")
         if entry.source:
             bits.append(Path(entry.source).name)
         if not entry.exists:

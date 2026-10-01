@@ -20,6 +20,7 @@ def test_reword_is_enabled_by_default() -> None:
     assert config.Settings().reword_enabled is True
     assert config.load().reword_enabled is True
     assert config.load().reword_tone == "clean"
+    assert config.Settings().clean_imports is True
 
 
 def test_existing_installation_switches_once() -> None:

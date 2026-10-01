@@ -179,6 +179,11 @@ def main_cli() -> int:
         help="ne pas ranger l'import dans la bibliothèque (export seul)",
     )
     parser.add_argument(
+        "--import-no-clean",
+        action="store_true",
+        help="ne pas nettoyer le transcript après l'import (passe LLM)",
+    )
+    parser.add_argument(
         "--library",
         action="store_true",
         help="liste la bibliothèque des imports (fichiers transcrits par Vox)",
@@ -609,7 +614,7 @@ def _import_command(args) -> int:
     from pathlib import Path
 
     from . import config as config_module
-    from .imports import Progress, process_file
+    from .imports import Progress, clean_transcript_with_settings, process_file
 
     settings = config_module.load()
     source = Path(args.import_file).expanduser()
@@ -647,6 +652,38 @@ def _import_command(args) -> int:
         return 1
 
     transcript = result.transcript
+    raw_copy = None
+    if settings.clean_imports and not args.import_no_clean:
+        import copy
+
+        raw_copy = copy.deepcopy(transcript)
+        print(f"  {'nettoyage':<14} Nettoyage éditorial…")
+
+        def on_clean(done: int, total: int) -> None:
+            print(f"  {'nettoyage':<14} {done}/{total}")
+
+        try:
+            report = clean_transcript_with_settings(
+                transcript, settings, progress=on_clean
+            )
+        except Exception as exc:
+            transcript.warnings.append(f"Nettoyage ignoré : {exc}")
+            print(f"  Nettoyage ignoré : {exc}")
+            raw_copy = None
+        else:
+            cost = float(report.get("cout", 0.0) or 0.0)
+            if cost:
+                transcript.cost = round(transcript.cost + cost, 8)
+            if report.get("annule"):
+                print("  Nettoyage interrompu (Ctrl+C) : texte brut conservé.")
+                raw_copy = None
+            else:
+                if not report.get("segments_modifies"):
+                    raw_copy = None
+                print(
+                    f"  Nettoyage    : {report['segments_modifies']} segment(s) "
+                    f"corrigé(s), {cost:.4f} $"
+                )
     target_dir = Path(args.import_out).expanduser() if args.import_out else source.parent
     target_dir.mkdir(parents=True, exist_ok=True)
     base = target_dir / f"{source.stem}.transcript"
@@ -687,6 +724,8 @@ def _import_command(args) -> int:
         from . import library
 
         entry = library.add(transcript, source, elapsed=result.elapsed)
+        if raw_copy is not None:
+            library.save_raw_copy(entry.id, raw_copy)
         print(f"  Bibliothèque : {entry.id} (relire avec vox --library)")
     return 0
 

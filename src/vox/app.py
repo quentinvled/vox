@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import sys
 import threading
@@ -19,11 +20,17 @@ from .api import Client
 from .autostart import set_autostart
 from .config import HOTKEY_CHOICES, Settings
 from .hotkey import EVENT_CANCEL, EVENT_START, EVENT_STOP, HotkeyManager
-from .imports import ImportCancelled, Progress, process_file
+from .imports import (
+    ImportCancelled,
+    Progress,
+    clean_transcript_with_settings,
+    process_file,
+)
 from .models import Catalogue
 from .naming import infer_speaker_names
 from .pipeline import Pipeline
 from .reword import TONES
+from .transcript import Transcript
 from .ui.history_window import RecordingsWindow
 from .ui.overlay import Overlay
 from .ui.settings_window import SettingsWindow
@@ -144,17 +151,61 @@ class _ImportWorker(QThread):
                 library.add(None, path, status="erreur", error=str(exc))
                 self.failed.emit(path, str(exc))
                 continue
+            transcript = result.transcript
+            raw_copy: Transcript | None = None
+            if self._settings.clean_imports:
+                raw_copy = copy.deepcopy(transcript)
+                if not self._clean(transcript):
+                    raw_copy = None  # rien de nettoye : inutile de garder un doublon
             if self._replace_id:
                 library.replace_transcript(
                     self._replace_id,
-                    result.transcript,
+                    transcript,
                     model=result.model,
-                    cost=result.transcript.cost,
+                    cost=transcript.cost,
                 )
+                if raw_copy is not None:
+                    library.save_raw_copy(self._replace_id, raw_copy)
                 self.replaced.emit(self._replace_id)
             else:
-                entry = library.add(result.transcript, path, elapsed=result.elapsed)
+                entry = library.add(transcript, path, elapsed=result.elapsed)
+                if raw_copy is not None:
+                    library.save_raw_copy(entry.id, raw_copy)
                 self.imported.emit(entry.id)
+
+    def _clean(self, transcript: Transcript) -> bool:
+        """Nettoyage editorial automatique. Ne fait jamais echouer l'import.
+
+        Renvoie True si le texte a effectivement ete retravaille (auquel cas
+        l'appelant conserve une copie brute a cote).
+        """
+        if self.cancel.is_set():
+            transcript.warnings.append("Nettoyage ignoré : import annulé.")
+            return False
+        self.progress.emit(0, 0, "Nettoyage éditorial…")
+        try:
+            report = clean_transcript_with_settings(
+                transcript,
+                self._settings,
+                progress=lambda done, total: self.progress.emit(
+                    done, total, f"Nettoyage éditorial : {done}/{total} bloc(s)"
+                ),
+                cancel=self.cancel,
+            )
+        except Exception as exc:
+            transcript.warnings.append(f"Nettoyage ignoré : {exc}")
+            return False
+        cost = float(report.get("cout", 0.0) or 0.0)
+        if cost:
+            transcript.cost = round(transcript.cost + cost, 8)
+        if report.get("annule"):
+            transcript.warnings.append("Nettoyage interrompu : texte brut conservé.")
+            return False
+        if report.get("blocs_en_echec"):
+            transcript.warnings.append(
+                f"Nettoyage partiel : {report['blocs_en_echec']} bloc(s) laissé(s) brut(s)."
+            )
+        return bool(report.get("segments_modifies"))
 
     def _on_progress(self, progress: Progress) -> None:
         message = progress.message

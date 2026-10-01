@@ -659,6 +659,17 @@ class SettingsWindow(QDialog):
             "locuteurs en double (fusionnables à la main dans la bibliothèque)."
         )
         form.addRow("", self.merge_speakers_check)
+
+        self.clean_imports_check = QCheckBox(
+            "Nettoyer automatiquement après l'import (LLM)"
+        )
+        self.clean_imports_check.setToolTip(
+            "Une passe de correction (ponctuation, majuscules, noms propres, "
+            "« euh » et répétitions) est lancée après la transcription, avant "
+            "de ranger le transcript. Coût indicatif : 0,05 à 0,10 $ par heure "
+            "d'audio. Le transcript brut est conservé à côté du nettoyé."
+        )
+        form.addRow("", self.clean_imports_check)
         outer.addWidget(box)
 
         hint = QLabel(
@@ -1040,6 +1051,7 @@ class SettingsWindow(QDialog):
         self.chunk_spin.setValue(int(settings.import_chunk_seconds or 0))
         self.parallel_spin.setValue(max(1, int(settings.import_parallel or 3)))
         self.merge_speakers_check.setChecked(settings.import_merge_speakers)
+        self.clean_imports_check.setChecked(settings.clean_imports)
 
     def _selected_hotkey(self) -> str:
         """Combinaison retenue, en tenant compte du mode personnalise."""
@@ -1112,6 +1124,7 @@ class SettingsWindow(QDialog):
             import_chunk_seconds=int(self.chunk_spin.value()),
             import_parallel=int(self.parallel_spin.value()),
             import_merge_speakers=self.merge_speakers_check.isChecked(),
+            clean_imports=self.clean_imports_check.isChecked(),
         )
 
     def custom_custom_text(self) -> str:

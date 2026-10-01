@@ -137,6 +137,9 @@ class Settings:
     import_parallel: int = 3
     # Raccord final des locuteurs entre tranches (passe LLM, quelques centimes).
     import_merge_speakers: bool = True
+    # Nettoyage editorial automatique apres l'import (ponctuation, noms propres,
+    # « euh ») : active par defaut, decochable dans Reglages → Traitement.
+    clean_imports: bool = True
 
     # --- Mises a jour ---
     check_updates: bool = True

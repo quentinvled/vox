@@ -107,6 +107,14 @@ l'agent.
 
 ## Journal
 
+- **01/10/2026 (imports)** — le **nettoyage éditorial devient automatique après
+  chaque import** (ton « Nettoyer » via le modèle de chat, glossaire repris du
+  vocabulaire des réglages). Décochable dans Réglages → Traitement
+  (`clean_imports`), désactivable ponctuellement avec `--import-no-clean`. Le
+  coût du nettoyage s'ajoute à celui de l'import (mesuré : 0,0013 $ pour 1 min,
+  soit ~0,08 $/h) et le **transcript brut est conservé** à côté du nettoyé
+  (`<id>.brut.json`), pour comparaison. Interruptible en cours d'import : on
+  garde alors le texte brut. Vérifié en vrai : 10 « euh » → 0 sur un extrait.
 - **01/10/2026** — la **reformulation devient active par défaut** (ton
   « Nettoyer ») : hésitations, répétitions, faux départs et ponctuation sont
   nettoyés avant l'insertion. Les installations existantes basculent une seule

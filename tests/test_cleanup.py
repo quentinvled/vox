@@ -83,3 +83,17 @@ def test_apply_replacements_ignores_unknown_indices() -> None:
     assert changed == 1
     assert transcript.segments[0].text == "un"
     assert transcript.segments[1].text == "texte brut 1"
+
+
+def test_clean_transcript_cancel_keeps_raw_text() -> None:
+    import threading
+
+    transcript = _transcript(5)
+    cancel = threading.Event()
+    cancel.set()
+    report = clean_transcript(transcript, FakeChat(), "modele-test", cancel=cancel)
+    assert report["annule"] is True
+    assert report["segments_modifies"] == 0
+    assert [segment.text for segment in transcript.segments] == [
+        f"texte brut {index}" for index in range(5)
+    ]

@@ -152,3 +152,33 @@ def test_entry_path_resolves_source(tmp_path: Path) -> None:
     entry = library.add(_transcript(source), source)
     assert entry.path == source
     assert entry.exists is True
+
+
+def test_raw_copy_lifecycle(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    cleaned = _transcript(source)
+    for segment in cleaned.segments:
+        segment.text = "Nettoyé."
+    cleaned.extras["nettoyage"] = {
+        "blocs": 1,
+        "segments_modifies": 3,
+        "blocs_en_echec": 0,
+        "modele": "modele-test",
+        "cout": 0.004,
+    }
+    entry = library.add(cleaned, source)
+
+    # Le nettoyage est visible dans l'index, mais aucune copie brute n'existe
+    # tant que l'appelant n'en a pas enregistre une.
+    assert entry.extras["nettoyage"]["cout"] == 0.004
+    assert library.load_raw_copy(entry.id) is None
+
+    library.save_raw_copy(entry.id, _transcript(source))
+    raw = library.load_raw_copy(entry.id)
+    assert raw is not None
+    assert raw.segments[0].text == "Bonjour à tous."
+    assert library.load_transcript(entry.id).segments[0].text == "Nettoyé."
+
+    assert library.delete(entry.id) is True
+    assert not library.raw_path(entry.id).exists()
+    assert library.load_raw_copy(entry.id) is None

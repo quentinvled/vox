@@ -112,6 +112,13 @@ transcript est cliquable, les locuteurs se renomment et se fusionnent,
 pas copié : la bibliothèque stocke l'index et le transcript JSON. Mémorisation
 des prénoms par contact : pas encore.
 
+**Nettoyage (01/10/2026)** : après chaque import, un nettoyage éditorial
+automatique corrige ponctuation, majuscules, noms propres et « euh », avec le
+vocabulaire des réglages comme glossaire. Décochable dans Réglages →
+Traitement. Le transcript brut d'avant nettoyage est conservé
+(`<id>.brut.json`) ; l'interface affiche « nettoyé (coût) » et le brut servira
+de base à un futur bouton « voir le brut / revenir au brut ».
+
 ## 7. Appels à plusieurs participants
 
 Fait à connaître : **l'appli d'appel mixe tous les interlocuteurs distants en une

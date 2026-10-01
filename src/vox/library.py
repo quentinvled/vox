@@ -43,6 +43,16 @@ def _preview(transcript: Transcript) -> str:
     return " ".join(text.split())[:180]
 
 
+def _apply_extras(entry: ImportEntry, transcript: Transcript) -> None:
+    """Recopie les informations utiles du transcript dans l'entrée d'index."""
+    entry.extras["tranches"] = transcript.extras.get("tranches", 0)
+    entry.extras["strategie"] = transcript.extras.get("strategie", "")
+    if transcript.extras.get("nettoyage"):
+        entry.extras["nettoyage"] = transcript.extras["nettoyage"]
+    if transcript.warnings:
+        entry.extras["avertissements"] = list(transcript.warnings)
+
+
 @dataclass
 class ImportEntry:
     """Un fichier importe, son transcript et son etat."""
@@ -179,7 +189,28 @@ def save_transcript(entry_id: str, transcript: Transcript) -> Path:
 
 
 def load_transcript(entry_id: str) -> Transcript | None:
-    path = transcript_path(entry_id)
+    return _read_transcript(transcript_path(entry_id))
+
+
+def raw_path(entry_id: str) -> Path:
+    """Transcript d'avant nettoyage editorial, conserve pour comparaison."""
+    return library_transcripts_dir() / f"{entry_id}.brut.json"
+
+
+def save_raw_copy(entry_id: str, transcript: Transcript) -> Path:
+    path = raw_path(entry_id)
+    path.write_text(
+        json.dumps(transcript.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return path
+
+
+def load_raw_copy(entry_id: str) -> Transcript | None:
+    return _read_transcript(raw_path(entry_id))
+
+
+def _read_transcript(path: Path) -> Transcript | None:
     if not path.exists():
         return None
     try:
@@ -247,10 +278,7 @@ def add(
     if elapsed:
         entry.extras["duree_traitement"] = round(elapsed, 1)
     if transcript is not None:
-        entry.extras["tranches"] = transcript.extras.get("tranches", 0)
-        if transcript.warnings:
-            entry.extras["avertissements"] = list(transcript.warnings)
-        entry.extras["strategie"] = transcript.extras.get("strategie", "")
+        _apply_extras(entry, transcript)
     append(entry)
     return entry
 
@@ -278,7 +306,7 @@ def replace_transcript(
         entry.extras["retranscriptions"] = int(entry.extras.get("retranscriptions", 0)) + 1
     entry.status = "ok"
     entry.error = ""
-    entry.extras["avertissements"] = list(transcript.warnings)
+    _apply_extras(entry, transcript)
     _update(entry)
     return entry
 
@@ -357,9 +385,10 @@ def _update(updated: ImportEntry) -> None:
 def delete(entry_id: str) -> bool:
     """Retire une entree et son transcript. Le fichier source reste intact."""
     removed = False
-    with contextlib.suppress(OSError):
-        transcript_path(entry_id).unlink()
-        removed = True
+    for path in (transcript_path(entry_id), raw_path(entry_id)):
+        with contextlib.suppress(OSError):
+            path.unlink()
+            removed = True
     entries = load()
     remaining = [entry for entry in entries if entry.id != entry_id]
     if len(remaining) != len(entries):
@@ -388,9 +417,12 @@ __all__ = [
     "delete",
     "get",
     "load",
+    "load_raw_copy",
     "load_transcript",
+    "raw_path",
     "refresh",
     "replace_transcript",
+    "save_raw_copy",
     "save_transcript",
     "stats",
     "transcript_path",
