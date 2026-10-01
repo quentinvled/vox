@@ -7,8 +7,9 @@ Dictée vocale globale : maintiens **Ctrl + Maj**, parle, relâche — le texte
 s'écrit tout seul dans la fenêtre active. Disponible sur **Windows** et
 **Linux**.
 
-Transcription via OpenRouter (Whisper, Qwen-ASR, Gemini…), reformulation LLM
-optionnelle, statistiques d'usage et historique audio local.
+Transcription via OpenRouter (Whisper, Qwen-ASR, Gemini…), nettoyage LLM
+actif par défaut (ton « Nettoyer », désactivable d'un clic dans la pilule),
+statistiques d'usage et historique audio local.
 
 ## Télécharger
 

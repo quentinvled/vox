@@ -107,6 +107,13 @@ l'agent.
 
 ## Journal
 
+- **01/10/2026** — la **reformulation devient active par défaut** (ton
+  « Nettoyer ») : hésitations, répétitions, faux départs et ponctuation sont
+  nettoyés avant l'insertion. Les installations existantes basculent une seule
+  fois (`extras.reword_default_on`) ; si l'utilisateur la coupe ensuite, son
+  choix est respecté. En cas d'échec du modèle de chat, le texte brut est inséré
+  et une ligne discrète le signale. Coût marginal (~0,001-0,003 $/dictée) et
+  latence ajoutée de 0,5 à 2 s selon le modèle de chat.
 - **30/09/2026 (nuit)** — étapes 1.8 et 1.9 terminées : **bibliothèque** des
   imports (index JSONL + transcript JSON, le fichier source n'est jamais copié
   ni supprimé), écran Bibliothèque unifié (dictées + imports), bouton

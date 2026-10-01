@@ -574,6 +574,13 @@ class SettingsWindow(QDialog):
         form = QFormLayout(box)
 
         self.reword_check = QCheckBox("Reformuler automatiquement avant l'insertion")
+        self.reword_check.setToolTip(
+            "Une seconde passe LLM rapide (0,5 à 2 s, coût négligeable) nettoie "
+            "les hésitations, les répétitions et la ponctuation avant "
+            "l'insertion. Si elle échoue, le texte brut est inséré normalement. "
+            "Le bouton « Reformuler » de la pilule permet de la couper d'un "
+            "clic pour une note rapide."
+        )
         form.addRow("", self.reword_check)
 
         self.tone_combo = NoWheelComboBox()
@@ -590,8 +597,9 @@ class SettingsWindow(QDialog):
 
         note = QLabel(
             "La reformulation envoie la transcription à un modèle de chat (coût "
-            "marginal négligeable). Désactive-la si tu veux le texte brut, sans "
-            "aucune modification."
+            "marginal négligeable). Elle est active par défaut, avec le ton "
+            "« Nettoyer » ; le texte brut reste disponible dans l'historique "
+            "si tu veux comparer."
         )
         note.setObjectName("hint")
         note.setWordWrap(True)

@@ -107,7 +107,7 @@ class Settings:
     strip_short_period: bool = True
 
     # --- Reformulation ---
-    reword_enabled: bool = False
+    reword_enabled: bool = True
     reword_tone: str = "clean"
     reword_custom_prompt: str = ""
 
@@ -252,6 +252,14 @@ def load() -> Settings:
     settings = Settings(**kwargs)
     if extras:
         settings.extras.update(extras)
+    # 01/10/2026 : la reformulation « Nettoyer » devient active par defaut.
+    # Une installation existante (ou le reglage etait enregistre a false)
+    # bascule une seule fois ; si l'utilisateur la desactive ensuite, son choix
+    # est conserve : le marqueur reste dans les extras.
+    if not settings.extras.get("reword_default_on"):
+        settings.reword_enabled = True
+        settings.extras["reword_default_on"] = True
+        save(settings)
     return settings
 
 

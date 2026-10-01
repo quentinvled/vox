@@ -280,7 +280,9 @@ class Pipeline(QObject):
                 self.settings.chat_model,
             )
         except Exception as exc:
-            self._notify("error", f"Reformulation échouée, texte brut conservé ({exc}).")
+            self._notify(
+                "info", f"Reformulation impossible, texte brut conservé ({exc})."
+            )
             return text, {"tone": None}
         cleaned = _strip_wrapping(completion.text)
         if not cleaned:
