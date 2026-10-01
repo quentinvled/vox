@@ -8,6 +8,8 @@ from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from .. import __version__
 from ..reword import TONES
+from ..sources import KIND_MIC, KIND_SYSTEM, SourceStatus, status_dot
+from .widgets import make_app_icon, make_dot_icon
 
 
 class Tray(QSystemTrayIcon):
@@ -25,7 +27,10 @@ class Tray(QSystemTrayIcon):
     taskbar_toggled = Signal(bool)
     stats_requested = Signal()
     history_requested = Signal()
+    import_requested = Signal()
     update_requested = Signal()
+    audio_refresh_requested = Signal()
+    audio_test_requested = Signal()
 
     def __init__(
         self,
@@ -43,11 +48,17 @@ class Tray(QSystemTrayIcon):
         self._reword_enabled = False
         self._autostart = autostart
         self._show_in_taskbar = show_in_taskbar
+        self._status_text = ""
+        self._audio_statuses: list[SourceStatus] = []
 
         self._menu = QMenu()
         self._build()
         self.setContextMenu(self._menu)
-        self.setToolTip(f"Vox {__version__} — {hotkey_label}")
+        # Le menu ouvert est le bon moment pour rafraichir les entrees audio :
+        # indisponible de le faire en continu, et l'utilisateur voit l'etat a
+        # l'instant ou il le demande.
+        self._menu.aboutToShow.connect(self.audio_refresh_requested.emit)
+        self._refresh_tooltip()
         self.activated.connect(self._on_activated)
 
     # ------------------------------------------------------------------
@@ -73,6 +84,14 @@ class Tray(QSystemTrayIcon):
         dashboard_action.triggered.connect(self.stats_requested.emit)
         self._menu.addAction(dashboard_action)
 
+        self.import_action = QAction("Importer un fichier audio…", self._menu)
+        self.import_action.setToolTip(
+            "Appel, réunion, vocal WhatsApp : transcrire, diariser et ranger "
+            "dans la bibliothèque"
+        )
+        self.import_action.triggered.connect(self.import_requested.emit)
+        self._menu.addAction(self.import_action)
+
         history_action = QAction("Bibliothèque (dictées, imports)…", self._menu)
         history_action.setToolTip(
             "Réécouter les dictées conservées, copier leur texte, les retranscrire"
@@ -84,6 +103,22 @@ class Tray(QSystemTrayIcon):
         self.toggle_action = QAction(f"Dicter ({self._hotkey_label})", self._menu)
         self.toggle_action.triggered.connect(self.toggle_requested.emit)
         self._menu.addAction(self.toggle_action)
+
+        # --- entrees audio : etat du micro et du son du systeme ---
+        self.audio_menu = self._menu.addMenu("Entrées audio")
+        self.mic_action = QAction("Micro : …", self.audio_menu)
+        self.mic_action.setEnabled(False)
+        self.audio_menu.addAction(self.mic_action)
+        self.system_action = QAction("Son du système : …", self.audio_menu)
+        self.system_action.setEnabled(False)
+        self.audio_menu.addAction(self.system_action)
+        self.audio_menu.addSeparator()
+        audio_test = QAction("Tester les entrées…", self.audio_menu)
+        audio_test.triggered.connect(self.audio_test_requested.emit)
+        self.audio_menu.addAction(audio_test)
+        audio_refresh = QAction("Actualiser", self.audio_menu)
+        audio_refresh.triggered.connect(self.audio_refresh_requested.emit)
+        self.audio_menu.addAction(audio_refresh)
 
         show_action = QAction("Afficher la pilule", self._menu)
         show_action.triggered.connect(self.show_requested.emit)
@@ -193,8 +228,44 @@ class Tray(QSystemTrayIcon):
             action.setChecked(True)
 
     def set_status(self, text: str) -> None:
+        self._status_text = text or ""
         self.status_action.setText(f"Vox {__version__} — {text}")
-        self.setToolTip(f"Vox {__version__}\n{text}\n{self._hotkey_label}")
+        self._refresh_tooltip()
+
+    def set_audio_status(self, statuses: list[SourceStatus]) -> None:
+        """Met a jour les indicateurs micro / son du systeme.
+
+        L'icone de la zone de notification change de pastille (verte, orange,
+        rouge) : l'etat se voit sans ouvrir le menu ; le detail est dans le
+        menu et dans l'infobulle.
+        """
+        self._audio_statuses = list(statuses or [])
+        for status in self._audio_statuses:
+            if status.kind == KIND_MIC:
+                action = self.mic_action
+            elif status.kind == KIND_SYSTEM:
+                action = self.system_action
+            else:
+                continue
+            action.setText(status.summary)
+            action.setIcon(make_dot_icon("ok" if status.available else "error"))
+        if self._audio_statuses:
+            self.setIcon(make_app_icon(dot=status_dot(self._audio_statuses)))
+        self._refresh_tooltip()
+
+    def _refresh_tooltip(self) -> None:
+        lines = [f"Vox {__version__}"]
+        if self._status_text:
+            lines.append(self._status_text)
+        for status in self._audio_statuses:
+            if status.available:
+                lines.append(f"{status.label} : {status.name}")
+                if status.active:
+                    lines.append(f"    son en cours : {', '.join(status.active)}")
+            else:
+                lines.append(f"{status.label} : {status.detail}")
+        lines.append(self._hotkey_label)
+        self.setToolTip("\n".join(lines))
 
     def set_update_available(self, version: str) -> None:
         """Fait apparaitre (ou masque si `version` est vide) l'entree de menu."""

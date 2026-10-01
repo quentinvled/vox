@@ -62,6 +62,7 @@ restent utilisables en texte seul, avec un avertissement dans le transcript.
 
 | Étape | Contenu | État |
 |---|---|---|
+| 2.0 | Détection des entrées (micro + WASAPI loopback + apps qui jouent du son), indicateurs dans la zone de notification, import accessible depuis la pilule et le menu | [~] |
 | 2.1 | Capture du son système (WASAPI loopback) | [ ] |
 | 2.2 | Double piste micro + système, fichiers séparés, mixage à l'export | [ ] |
 | 2.3 | Modes micro / système / les deux dans le menu et les réglages | [ ] |
@@ -107,6 +108,19 @@ l'agent.
 
 ## Journal
 
+- **01/10/2026 (assistant, étape 1)** — l'import n'était pas trouvable : il
+  reste **un bouton dans la pilule** (« ☰ » à côté de l'engrenage) et une
+  entrée **« Importer un fichier audio… »** en haut du menu de l'icône ;
+  l'import ouvre la bibliothèque avant de démarrer, on voit où ça arrive.
+  Première brique de l'assistant : **détection des entrées audio** (micro des
+  réglages ou par défaut, son du système via WASAPI loopback `PyAudioWPatch`,
+  applications qui jouent du son via `pycaw`) avec **pastille d'état sur
+  l'icône** (verte / orange / rouge), détail dans le menu
+  « Entrées audio » et l'infobulle, action « Tester les entrées… ». Aucun flux
+  n'est ouvert par la détection. Reste à valider sur Windows : pastille verte
+  si le micro et la sortie sont vus ; « Tester les entrées » doit annoncer
+  WhatsApp quand il joue du son. La capture réelle (piste micro + piste
+  système) est l'étape suivante.
 - **01/10/2026 (imports)** — le **nettoyage éditorial devient automatique après
   chaque import** (ton « Nettoyer » via le modèle de chat, glossaire repris du
   vocabulaire des réglages). Décochable dans Réglages → Traitement

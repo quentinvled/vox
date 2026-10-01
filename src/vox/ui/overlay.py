@@ -47,6 +47,7 @@ class Overlay(QWidget):
     reword_toggled = Signal(bool)
     reinsert_requested = Signal()
     copy_requested = Signal()
+    library_requested = Signal()
     settings_requested = Signal()
     hidden_by_user = Signal()
     moved = Signal(int, int)
@@ -148,6 +149,10 @@ class Overlay(QWidget):
         self.close_button = IconButton("✕", "Masquer")
         self.close_button.clicked.connect(self._on_close)
         actions.addWidget(self.close_button)
+
+        self.library_button = IconButton("☰", "Bibliothèque (dictées, imports)")
+        self.library_button.clicked.connect(self.library_requested.emit)
+        actions.addWidget(self.library_button)
 
         self.settings_button = IconButton("⚙", "Réglages")
         self.settings_button.clicked.connect(self.settings_requested.emit)

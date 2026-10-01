@@ -11,7 +11,10 @@ Transcription via OpenRouter (Whisper, Qwen-ASR, Gemini…), nettoyage LLM
 actif par défaut (ton « Nettoyer », désactivable d'un clic dans la pilule),
 statistiques d'usage et historique audio local. Les fichiers importés (appels,
 réunions, vocaux) sont transcrits, diarisés puis nettoyés automatiquement, avec
-transcript cliquable et export md/txt/srt/vtt/json.
+transcript cliquable et export md/txt/srt/vtt/json — import par le bouton
+« ☰ » de la pilule ou « Importer un fichier audio… » dans le menu de l'icône.
+L'état des entrées audio (micro, son du système, applications en cours) est
+visible dans la zone de notification.
 
 ## Télécharger
 

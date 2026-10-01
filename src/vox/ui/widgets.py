@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections import deque
 
-from PySide6.QtCore import QRectF, Qt, QTimer
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -244,8 +244,20 @@ def make_clipboard_icon(size: int = 256) -> QIcon:
     return icon
 
 
-def make_app_icon(size: int = 256) -> QIcon:
+# Pastilles d'etat des entrees audio (zone de notification, menus).
+STATUS_COLORS = {
+    "ok": "#3ecf8e",
+    "warn": "#f0a92e",
+    "error": "#e2555f",
+}
+
+
+def make_app_icon(size: int = 256, dot: str | None = None) -> QIcon:
     """Icone « onde vocale » dessinee en code (aucun asset externe).
+
+    `dot` ajoute une pastille d'etat dans le coin : « ok », « warn » ou
+    « error ». C'est ce qui permet de voir d'un coup d'oeil, dans la zone de
+    notification, si le micro et le son du systeme sont disponibles.
 
     Les barres sont volontairement epaisses et peu margées : a 16 px, dans la
     zone de notification, l'icone doit rester lisible et reconnaissable.
@@ -280,11 +292,40 @@ def make_app_icon(size: int = 256) -> QIcon:
         inner.addRoundedRect(rect, bar_width / 2.0, bar_width / 2.0)
         painter.fillPath(inner, QColor(255, 255, 255, 248))
 
+    # Pastille d'etat, bordee pour rester visible sur tous les fonds.
+    if dot in STATUS_COLORS:
+        radius = size * 0.19
+        circle = QPointF(size * 0.77, size * 0.77)
+        painter.setPen(QPen(QColor(16, 18, 28, 220), max(1.0, size * 0.035)))
+        painter.setBrush(QColor(STATUS_COLORS[dot]))
+        painter.drawEllipse(circle, radius, radius)
+
     painter.end()
 
     icon = QIcon()
     # Tailles logiques + versions x1.25 / x1.5 / x1.75 / x2 pour le High-DPI.
     for dimension in (16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 96, 128, 256):
+        icon.addPixmap(
+            pixmap.scaled(dimension, dimension, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
+    return icon
+
+
+def make_dot_icon(state: str, size: int = 28) -> QIcon:
+    """Petite pastille ronde pour les menus (meme palette que les icones)."""
+    color = STATUS_COLORS.get(state, STATUS_COLORS["error"])
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(QPen(QColor(16, 18, 28, 90), max(1.0, size * 0.06)))
+    painter.setBrush(QColor(color))
+    painter.drawEllipse(QPointF(size / 2.0, size / 2.0), size * 0.33, size * 0.33)
+    painter.end()
+
+    icon = QIcon()
+    for dimension in (16, 20, 24, 28, 32, 48, 64):
         icon.addPixmap(
             pixmap.scaled(dimension, dimension, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )

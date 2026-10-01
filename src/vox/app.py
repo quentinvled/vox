@@ -12,9 +12,9 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import QApplication, QDialog, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QSystemTrayIcon
 
-from . import __version__, injector, library, models, recordings, sounds, updates
+from . import __version__, injector, library, models, recordings, sounds, sources, updates
 from . import config as config_module
 from .api import Client
 from .autostart import set_autostart
@@ -305,6 +305,9 @@ class VoxApp(QObject):
         self.tray.settings_requested.connect(self.open_settings)
         self.tray.stats_requested.connect(self.open_stats)
         self.tray.history_requested.connect(self.open_recordings)
+        self.tray.import_requested.connect(self.choose_import_files)
+        self.tray.audio_refresh_requested.connect(self.refresh_audio_status)
+        self.tray.audio_test_requested.connect(self.test_audio_inputs)
         self.tray.update_requested.connect(self.open_update)
         self.tray.quit_requested.connect(self.quit)
         self.tray.model_selected.connect(self.set_model)
@@ -318,6 +321,7 @@ class VoxApp(QObject):
         self.overlay.reword_toggled.connect(self.set_reword_enabled)
         self.overlay.reinsert_requested.connect(self.pipeline.reinsert_last)
         self.overlay.copy_requested.connect(self.pipeline.copy_last)
+        self.overlay.library_requested.connect(self.open_recordings)
         self.overlay.settings_requested.connect(self.open_settings)
         self.overlay.moved.connect(self._on_overlay_moved)
 
@@ -364,6 +368,9 @@ class VoxApp(QObject):
         QTimer.singleShot(4000, self._prune_recordings)
         self.tray.show()
         self.tray.set_status("Prêt")
+        # Les entrees audio (micro, son du systeme) sont detectees apres le
+        # demarrage : la pastille de l'icone renseigne tout de suite.
+        QTimer.singleShot(1500, self.refresh_audio_status)
         self._hotkey_timer.start()
         self._load_catalogue()
 
@@ -837,6 +844,49 @@ class VoxApp(QObject):
         self._recordings_window.activateWindow()
 
     # ------------------------------------------------------------------
+    # Entrées audio (assistant : micro, son du système)
+    # ------------------------------------------------------------------
+    def refresh_audio_status(self) -> None:
+        """Détecte micro et son du système, et met à jour les indicateurs."""
+        try:
+            statuses = sources.detect(self.settings.input_device)
+        except Exception as exc:  # ne doit jamais empêcher l'app de tourner
+            log.warning("Détection des entrées audio impossible : %s", exc)
+            return
+        self.tray.set_audio_status(statuses)
+
+    def test_audio_inputs(self) -> None:
+        """Vérifie les entrées et raconte le résultat en une notification."""
+        try:
+            statuses = sources.detect(self.settings.input_device)
+        except Exception as exc:
+            self._on_notice("error", f"Détection audio impossible : {exc}")
+            return
+        self.tray.set_audio_status(statuses)
+        self.tray.showMessage(
+            "Vox — entrées audio",
+            "\n".join(status.summary for status in statuses),
+            QSystemTrayIcon.Information,
+            8000,
+        )
+
+    def choose_import_files(self) -> None:
+        """Choisit des fichiers audio à importer, puis ouvre la bibliothèque."""
+        paths, _ = QFileDialog.getOpenFileNames(
+            None,
+            "Importer des fichiers audio",
+            str(Path.home()),
+            "Audio (*.mp3 *.m4a *.wav *.flac *.ogg *.opus *.wma *.aac *.mp4 *.mkv *.webm)"
+            ";;Tous les fichiers (*)",
+        )
+        if not paths:
+            return
+        # La bibliothèque s'ouvre avant l'import : on voit où le transcript
+        # arrive, et la progression y est affichée.
+        self.open_recordings()
+        self.start_import(paths)
+
+    # ------------------------------------------------------------------
     # Import de fichiers audio
     # ------------------------------------------------------------------
     def start_import(self, paths: list[str], replace_id: str = "") -> None:
@@ -1043,6 +1093,7 @@ class VoxApp(QObject):
             self._stats_window.refresh()
         self.overlay.set_state("idle", detail=f"{self.hotkey_label} pour dicter")
         self._load_catalogue(force=True)
+        self.refresh_audio_status()
         self._on_notice("info", "Réglages enregistrés.")
 
     def _apply_theme(self) -> None:

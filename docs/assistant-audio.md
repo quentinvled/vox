@@ -76,6 +76,14 @@ Décisions :
 - **Périphérique débranché en cours d'enregistrement** : continuer l'autre piste,
   notification discrète.
 
+**Implémenté le 01/10/2026 (détection)** : Vox repère à la demande le micro
+(réglages ou défaut), la sortie son du système (WASAPI loopback via
+`PyAudioWPatch`) et les applications qui jouent du son (`pycaw`). Les
+indicateurs sont dans la zone de notification — pastille verte / orange / rouge
+sur l'icône, détail dans le menu « Entrées audio », action « Tester les
+entrées… » — et la détection n'ouvre aucun flux. La capture réelle (deux
+pistes séparées) est l'étape suivante.
+
 ## 5. Détection des appels
 
 Principe : ce n'est pas de la magie, c'est **« quelle app tient le micro, et

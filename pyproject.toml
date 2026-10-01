@@ -12,6 +12,9 @@ dependencies = [
     "pyside6>=6.11.2",
     "pynput>=1.7.7; sys_platform == 'linux'",
     "sounddevice>=0.5.6",
+    # Son du systeme (WASAPI loopback) et applications qui jouent du son.
+    "pycaw>=20240210; sys_platform == 'win32'",
+    "pyaudiowpatch>=0.2.12.8; sys_platform == 'win32'",
 ]
 
 [project.scripts]
@@ -51,6 +54,9 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 "src/vox/recorder.py" = ["S110"]
 "src/vox/hotkey.py" = ["S110"]
 "src/vox/api.py" = ["S110"]
+# La detection des entrees audio est defensive : un peripherique casse ou une
+# session COM fermee ne doit jamais remonter d'erreur bruyante.
+"src/vox/sources.py" = ["S110", "S112"]
 # L'historique est un journal local : l'heure locale naive est volontaire.
 "src/vox/pipeline.py" = ["DTZ005"]
 "src/vox/recordings.py" = ["DTZ005"]

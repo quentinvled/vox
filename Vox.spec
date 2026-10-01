@@ -43,7 +43,16 @@ hiddenimports += [
 ]
 
 if sys.platform == "win32":
-    hiddenimports += ["keyboard", "keyboard._winkeyboard"]
+    hiddenimports += [
+        "keyboard",
+        "keyboard._winkeyboard",
+        # Son du systeme : WASAPI loopback et applications qui jouent du son.
+        "pyaudiowpatch",
+        "_portaudiowpatch",
+        "pycaw",
+        "comtypes",
+        "psutil",
+    ]
 else:
     # Linux : le raccourci global et la frappe passent par pynput (X11).
     hiddenimports += [
