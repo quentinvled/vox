@@ -153,6 +153,11 @@ def test_app_import_flow_end_to_end(qapp, monkeypatch, tmp_path: Path) -> None:
     source = _source(tmp_path)
     result = _fake_result(source)
     monkeypatch.setattr("vox.app.process_file", lambda *_a, **_k: result)
+    # Le nettoyage est désactivé pour ce test : pas d'appel réseau.
+    monkeypatch.setattr(
+        "vox.app.clean_transcript_with_settings",
+        lambda *_a, **_k: {"blocs": 0, "segments_modifies": 0, "cout": 0.0},
+    )
 
     vox = app_module.VoxApp(qapp)
     try:
