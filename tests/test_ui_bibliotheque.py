@@ -398,3 +398,32 @@ def test_names_worker_applies_mapping(monkeypatch, tmp_path: Path) -> None:
 
     assert done and done[0][1] == {"t0:c0:s0": "Jonas"}
     assert library.get(entry.id).speakers == ["Jonas", "Locuteur 2"]
+
+
+def test_call_entries_have_their_own_filter(qapp, tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    library.add(
+        _transcript(source),
+        source,
+        title="Appel — 02/10 14:32",
+        kind=library.KIND_CALL,
+    )
+    window = RecordingsWindow(Settings())
+    try:
+        assert "📞" in window.list_widget.item(0).text()
+
+        def _visible() -> int:
+            return sum(
+                1
+                for index in range(window.list_widget.count())
+                if not window.list_widget.item(index).isHidden()
+            )
+
+        window._set_filter("appels")
+        assert _visible() == 1
+        window._set_filter("imports")
+        assert _visible() == 0
+        window._set_filter("tout")
+        assert _visible() == 1
+    finally:
+        window.deleteLater()

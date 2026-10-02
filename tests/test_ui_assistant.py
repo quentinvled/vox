@@ -101,6 +101,61 @@ def test_status_icons_are_drawn(qapp) -> None:
     assert not make_dot_icon("error").isNull()
 
 
+def test_tray_status_lines_are_clickable(qapp) -> None:
+    """Les lignes d'état doivent rester lisibles (non grisées) et cliquables."""
+    tray = Tray(make_app_icon(), "Ctrl+Maj")
+    try:
+        tests: list[bool] = []
+        tray.audio_test_requested.connect(lambda: tests.append(True))
+        assert tray.mic_action.isEnabled()
+        assert tray.system_action.isEnabled()
+        tray.mic_action.trigger()
+        tray.system_action.trigger()
+        assert tests == [True, True]
+    finally:
+        tray.deleteLater()
+
+
+def test_tray_call_action_states(qapp) -> None:
+    tray = Tray(make_app_icon(), "Ctrl+Maj")
+    try:
+        seen: list[bool] = []
+        tray.call_toggle_requested.connect(lambda: seen.append(True))
+        tray.call_action.trigger()
+        assert seen == [True]
+
+        tray.set_call_state(True, 65)
+        assert "Arrêter l'enregistrement" in tray.call_action.text()
+        assert "01:05" in tray.call_action.text()
+        assert not tray.call_action.icon().isNull()
+
+        tray.set_call_state(False)
+        assert "Enregistrer un appel" in tray.call_action.text()
+    finally:
+        tray.deleteLater()
+
+
+def test_overlay_call_mode_shows_stop(qapp) -> None:
+    overlay = Overlay()
+    try:
+        assert overlay.stop_button.isHidden()
+        overlay.set_call_recording(True)
+        assert not overlay.stop_button.isHidden()
+        assert overlay.model_chip.isHidden()
+        assert overlay.reword_chip.isHidden()
+
+        stops: list[bool] = []
+        overlay.stop_recording_requested.connect(lambda: stops.append(True))
+        overlay.stop_button.click()
+        assert stops == [True]
+
+        overlay.set_call_recording(False)
+        assert overlay.stop_button.isHidden()
+        assert not overlay.model_chip.isHidden()
+    finally:
+        overlay.deleteLater()
+
+
 # ----------------------------------------------------------------------
 # Application
 # ----------------------------------------------------------------------
@@ -316,3 +371,118 @@ def test_settings_import_flow_end_to_end(qapp, monkeypatch, tmp_path) -> None:
         if vox._settings_window is not None:
             vox._settings_window.reject()
         vox.quit()
+
+
+# ----------------------------------------------------------------------
+# Enregistrement d'appel
+# ----------------------------------------------------------------------
+def test_app_call_recording_flow(qapp, monkeypatch, tmp_path: Path) -> None:
+    import time
+
+    from vox import app as app_module
+
+    class _FakeMicro:
+        def __init__(self, **_kwargs) -> None:
+            self.recording = False
+            self.level = 0.4
+            self.has_speech = True
+            self.hit_max = False
+
+        def start(self) -> None:
+            self.recording = True
+
+        def stop(self) -> bytes:
+            self.recording = False
+            return b"RIFF" + b"\x00" * 64
+
+        def cancel(self) -> None:
+            self.recording = False
+
+        def close(self) -> None:
+            pass
+
+        def elapsed(self) -> float:
+            return 0.0
+
+    monkeypatch.setattr("vox.app.Recorder", lambda **_kwargs: _FakeMicro())
+    monkeypatch.setattr("vox.app.SystemRecorder", lambda _info: _FakeMicro())
+    monkeypatch.setattr(
+        "vox.app.sources.wasapi_loopback",
+        lambda: {"index": 1, "name": "Sortie", "rate": 48000, "channels": 2},
+    )
+
+    vox = app_module.VoxApp(qapp)
+    try:
+        started: list[tuple] = []
+        monkeypatch.setattr(
+            vox,
+            "start_call_transcription",
+            lambda mic_path, system_path, offset, title: started.append(
+                (Path(mic_path), system_path, offset, title)
+            ),
+        )
+
+        vox.start_call_recording()
+        assert vox.call_recording
+        assert "Arrêter" in vox.tray.call_action.text()
+        assert not vox.overlay.stop_button.isHidden()
+
+        # Simule un appel déjà commencé depuis 30 secondes.
+        vox._call_started_at = time.monotonic() - 30
+        vox._tick_call()
+        assert "00:30" in vox.tray.call_action.text()
+
+        vox.stop_call_recording()
+        assert not vox.call_recording
+        assert vox.overlay.stop_button.isHidden()
+        assert started, "la transcription doit être lancée"
+        mic_path, system_path, _offset, title = started[0]
+        assert title.startswith("Appel — ")
+        assert system_path is not None
+        assert mic_path.exists() and system_path.exists()
+    finally:
+        vox.quit()
+
+
+def test_call_transcriber_creates_call_entry(monkeypatch, tmp_path: Path) -> None:
+    from vox import app as app_module
+    from vox.config import Settings
+    from vox.transcript import Segment, Speaker, Transcript
+
+    mic = tmp_path / "mic.wav"
+    system = tmp_path / "systeme.wav"
+    mic.write_bytes(b"x")
+    system.write_bytes(b"x")
+
+    def _fake_process(_mic, _system, _settings, **_kwargs):
+        return Transcript(
+            segments=[
+                Segment(0.0, 1.0, "moi", "Salut."),
+                Segment(1.5, 2.5, "sys:t0:c0:s0", "Bonjour."),
+            ],
+            speakers=[
+                Speaker(id="moi", name="Moi"),
+                Speaker(id="sys:t0:c0:s0", name="Interlocuteur 1"),
+            ],
+            duration=2.5,
+            model="microsoft/mai-transcribe-2",
+            cost=0.02,
+        )
+
+    monkeypatch.setattr("vox.app.calls.process_call", _fake_process)
+    worker = app_module._CallTranscriber(
+        mic, system, 0.5, "Appel — test", Settings(clean_imports=False)
+    )
+    done: list[str] = []
+    worker.done.connect(done.append)
+    worker.run()
+
+    assert done
+    entry = library.get(done[0])
+    assert entry is not None
+    assert entry.kind == library.KIND_CALL
+    assert entry.title == "Appel — test"
+    assert entry.cost == pytest.approx(0.02)
+    stored = library.load_transcript(entry.id)
+    assert stored is not None
+    assert stored.speaker_labels() == ["Moi", "Interlocuteur 1"]

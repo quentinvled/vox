@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import time
 import wave
@@ -169,10 +170,8 @@ class Recorder:
 
     def _stop_stream(self) -> None:
         if self._stream is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._stream.stop()
-            except Exception:
-                pass
 
     def stop(self) -> bytes:
         """Arrete la capture et renvoie le WAV (bytes)."""
@@ -199,6 +198,161 @@ def _encode_wav(samples: np.ndarray, samplerate: int) -> bytes:
         handle.setframerate(samplerate)
         handle.writeframes(samples.tobytes())
     return buffer.getvalue()
+
+
+def _resample(samples: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
+    """Reechantillonne en int16 (interpolation lineaire, suffisant pour la parole)."""
+    if samples.size == 0 or source_rate <= 0 or source_rate == target_rate:
+        return samples
+    count = round(samples.size * target_rate / source_rate)
+    if count <= 1:
+        return samples[:1]
+    positions = np.linspace(0.0, samples.size - 1, samples.size, dtype=np.float64)
+    targets = np.linspace(0.0, samples.size - 1, count, dtype=np.float64)
+    return np.interp(targets, positions, samples.astype(np.float32)).astype(np.int16)
+
+
+class SystemRecorder:
+    """Capture le son du systeme (WASAPI loopback) en WAV 16 kHz mono.
+
+    Windows uniquement (PyAudioWPatch). Le flux est ouvert au demarrage ; le
+    niveau RMS est expose pour l'UI, comme pour le micro. L'enregistrement sert
+    aux appels : cette piste contient les interlocuteurs.
+    """
+
+    def __init__(
+        self,
+        info: dict | None = None,
+        target_rate: int = 16000,
+        max_seconds: int = 4 * 3600,
+    ) -> None:
+        self.info = dict(info or {})
+        self.target_rate = target_rate
+        self.max_seconds = max_seconds
+        self._pa = None
+        self._stream = None
+        self._active = False
+        self._frames: list[np.ndarray] = []
+        self._started_at = 0.0
+        self._level = 0.0
+        self._max_peak = 0.0
+        self._hit_max = False
+
+    # ------------------------------------------------------------------
+    @property
+    def recording(self) -> bool:
+        return self._active
+
+    @property
+    def level(self) -> float:
+        return self._level
+
+    @property
+    def has_speech(self) -> bool:
+        return self._max_peak >= SILENCE_PEAK
+
+    @property
+    def hit_max(self) -> bool:
+        return self._hit_max
+
+    @property
+    def available(self) -> bool:
+        return bool(self.info)
+
+    def elapsed(self) -> float:
+        if not self._active:
+            return 0.0
+        return time.monotonic() - self._started_at
+
+    # ------------------------------------------------------------------
+    def _callback(self, in_data, _frame_count, _time_info, _status):
+        if self._active:
+            samples = np.frombuffer(in_data, dtype=np.int16)
+            channels = max(1, int(self.info.get("channels") or 1))
+            if channels > 1 and samples.size >= channels:
+                samples = samples.reshape(-1, channels).mean(axis=1)
+            chunk = samples.astype(np.int16)
+            self._frames.append(chunk)
+            floats = chunk.astype(np.float32) / 32768.0
+            if floats.size:
+                rms = float(np.sqrt(np.mean(np.square(floats))))
+                peak = float(np.max(np.abs(floats)))
+                self._level = max(rms, self._level * 0.75)
+                self._max_peak = max(peak, self._max_peak)
+            if self.elapsed() >= self.max_seconds:
+                self._hit_max = True
+        return (None, 0)  # pyaudio.paContinue
+
+    # ------------------------------------------------------------------
+    def start(self) -> None:
+        if self._active:
+            return
+        if not self.info:
+            raise RecorderError("Son du système indisponible sur cette machine.")
+        try:
+            import pyaudiowpatch as pyaudio
+        except Exception as exc:  # composant absent du build
+            raise RecorderError(
+                "Capture du son du système indisponible dans cette version."
+            ) from exc
+
+        self._frames = []
+        self._level = 0.0
+        self._max_peak = 0.0
+        self._hit_max = False
+        try:
+            self._pa = self._pa or pyaudio.PyAudio()
+            self._stream = self._pa.open(
+                format=pyaudio.paInt16,
+                channels=int(self.info.get("channels") or 2),
+                rate=int(self.info.get("rate") or 48000),
+                input=True,
+                input_device_index=int(self.info.get("index", -1)),
+                frames_per_buffer=1024,
+                stream_callback=self._callback,
+            )
+            self._stream.start_stream()
+        except Exception as exc:
+            self._close_stream()
+            raise RecorderError(
+                f"Impossible de capturer le son du système ({exc})."
+            ) from exc
+        self._active = True
+        self._started_at = time.monotonic()
+
+    def _close_stream(self) -> None:
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            for method in ("stop_stream", "close"):
+                with contextlib.suppress(Exception):
+                    getattr(stream, method)()
+
+    def stop(self) -> bytes:
+        """Arrete la capture et renvoie le WAV (bytes), reechantillonne a 16 kHz."""
+        self._active = False
+        self._close_stream()
+        frames, self._frames = self._frames, []
+        self._level = 0.0
+        if not frames:
+            return b""
+        samples = np.concatenate(frames, axis=0)
+        samples = _resample(
+            samples, int(self.info.get("rate") or 48000), self.target_rate
+        )
+        return _encode_wav(samples, self.target_rate)
+
+    def cancel(self) -> None:
+        self._active = False
+        self._close_stream()
+        self._frames = []
+        self._level = 0.0
+
+    def close(self) -> None:
+        self.cancel()
+        if self._pa is not None:
+            with contextlib.suppress(Exception):
+                self._pa.terminate()
+            self._pa = None
 
 
 def list_input_devices() -> list[dict]:

@@ -49,6 +49,7 @@ class Overlay(QWidget):
     copy_requested = Signal()
     library_requested = Signal()
     settings_requested = Signal()
+    stop_recording_requested = Signal()
     hidden_by_user = Signal()
     moved = Signal(int, int)
 
@@ -67,6 +68,7 @@ class Overlay(QWidget):
         self._theme = "dark"
         self._state = "idle"
         self._tone = "clean"
+        self._call_recording = False
         self._drag_offset: QPoint | None = None
         self._hide_delay = 0
         self._taskbar_visible = False
@@ -146,6 +148,12 @@ class Overlay(QWidget):
         actions = QVBoxLayout()
         actions.setSpacing(6)
         actions.setContentsMargins(0, 0, 0, 0)
+
+        self.stop_button = IconButton("■", "Arrêter l'enregistrement")
+        self.stop_button.clicked.connect(self.stop_recording_requested.emit)
+        self.stop_button.hide()
+        actions.addWidget(self.stop_button)
+
         self.close_button = IconButton("✕", "Masquer")
         self.close_button.clicked.connect(self._on_close)
         actions.addWidget(self.close_button)
@@ -211,7 +219,21 @@ class Overlay(QWidget):
     def set_reword_enabled(self, enabled: bool) -> None:
         self.reword_chip.setChecked(enabled)
 
-    def set_state(self, state: str, message: str = "", detail: str = "") -> None:
+    def set_call_recording(self, active: bool) -> None:
+        """Mode « enregistrement d'appel » : bouton Stop, puces masquées.
+
+        La pilule reste la même, en plus simple : pendant un appel, le modèle
+        et la reformulation n'ont pas de sens, on ne garde que le niveau et
+        l'arrêt.
+        """
+        self._call_recording = bool(active)
+        self.stop_button.setVisible(self._call_recording)
+        self.model_chip.setVisible(not self._call_recording)
+        self.reword_chip.setVisible(not self._call_recording)
+
+    def set_state(
+        self, state: str, message: str = "", detail: str = "", title: str = ""
+    ) -> None:
         self._state = state
         self.bars.setVisible(state == "recording")
         self.spinner.setVisible(state in {"transcribing", "rewording"})
@@ -221,7 +243,7 @@ class Overlay(QWidget):
             self.spinner.stop()
 
         self.bars.set_active(state == "recording")
-        self.title.setText(STATE_TITLES.get(state, state))
+        self.title.setText(title or STATE_TITLES.get(state, state))
 
         wanted = "overlaySubtitleError" if state == "error" else "overlaySubtitle"
         if self.subtitle.objectName() != wanted:

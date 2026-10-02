@@ -62,7 +62,12 @@ SPEAKER_COLORS = (
 
 KIND_DICTATION = "dictee"
 KIND_IMPORT = "import"
-FILTERS = (("tout", "Tout"), ("dictees", "Dictées"), ("imports", "Imports"))
+FILTERS = (
+    ("tout", "Tout"),
+    ("dictees", "Dictées"),
+    ("appels", "Appels"),
+    ("imports", "Imports"),
+)
 PAGE_DICTATION = 0
 PAGE_IMPORT = 1
 
@@ -556,7 +561,8 @@ class RecordingsWindow(QWidget):
 
     @staticmethod
     def _import_row(entry: ImportEntry) -> str:
-        head = f"📄 {entry.short_when()} · {entry.duration_label()}"
+        icone = "📞" if entry.kind == library.KIND_CALL else "📄"
+        head = f"{icone} {entry.short_when()} · {entry.duration_label()}"
         if entry.status != "ok":
             return f"{head} · Échec — {entry.label}"
         speakers = entry.speakers_label()
@@ -593,9 +599,19 @@ class RecordingsWindow(QWidget):
             item = self.list_widget.item(index)
             data = str(item.data(Qt.UserRole) or "")
             kind = data.split(":", 1)[0]
-            kind_ok = self._filter == "tout" or (
-                self._filter == "dictees" and kind == KIND_DICTATION
-            ) or (self._filter == "imports" and kind == KIND_IMPORT)
+            key = data.split(":", 1)[1] if ":" in data else ""
+            entry_kind = ""
+            if kind == KIND_IMPORT:
+                entry = next((item for item in self._imports if item.id == key), None)
+                entry_kind = entry.kind if entry is not None else library.KIND_IMPORT
+            if self._filter == "tout":
+                kind_ok = True
+            elif self._filter == "dictees":
+                kind_ok = kind == KIND_DICTATION
+            elif self._filter == "appels":
+                kind_ok = entry_kind == library.KIND_CALL
+            else:  # imports : les appels enregistres ont leur propre filtre
+                kind_ok = kind == KIND_IMPORT and entry_kind != library.KIND_CALL
             haystack = str(item.data(Qt.UserRole + 2) or "")
             match = kind_ok and (not needle or needle in haystack)
             item.setHidden(not match)

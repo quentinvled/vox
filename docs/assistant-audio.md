@@ -84,6 +84,16 @@ sur l'icône, détail dans le menu « Entrées audio », action « Tester les
 entrées… » — et la détection n'ouvre aucun flux. La capture réelle (deux
 pistes séparées) est l'étape suivante.
 
+**Implémenté le 02/10/2026 (enregistrement)** : le test des entrées tourne en
+continu (toutes les 5 s, instance PyAudio réutilisée) et les lignes du menu
+sont colorées et cliquables. Un clic sur « Enregistrer un appel (micro + son
+système)… » démarre les deux pistes ; la pilule montre chrono, niveaux et un
+bouton d'arrêt (masquable, l'icône passe au rouge). À l'arrêt : fichiers séparés
+dans `appels/`, transcription automatique de chaque piste (micro sans
+diarisation, système diarisé), recollage temporel (`calls.merge_tracks`) et
+rangement dans la bibliothèque. Restent : mixage à l'écoute, modes
+micro/système/les deux explicites, pause, et les pièges Bluetooth.
+
 ## 5. Détection des appels
 
 Principe : ce n'est pas de la magie, c'est **« quelle app tient le micro, et

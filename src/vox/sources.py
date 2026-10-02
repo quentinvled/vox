@@ -3,13 +3,15 @@
 Deux usages :
 
 * les indicateurs de la zone de notification (ce que Vox peut capturer) ;
-* la préparation de l'enregistrement d'appel : micro et son du système seront
-  capturés en deux pistes séparées.
+* l'enregistrement d'appel : micro et son du système capturés en deux pistes.
 
 Tout est détecté à la demande, **sans ouvrir de flux** : un appel à `detect()`
 ne touche pas à l'audio, ne bloque rien et n'allume pas le micro. Le son du
 système est lu via WASAPI loopback (Windows, `PyAudioWPatch`) ; les
 applications qui jouent du son sont listées par `pycaw` quand il est là.
+
+L'instance `PyAudio` est créée une fois puis réutilisée : le test peut donc
+être refait en continu (toutes les quelques secondes) sans coût visible.
 """
 
 from __future__ import annotations
@@ -35,6 +37,9 @@ _IGNORED_APPS = {
     "sons système",
     "windows",
 }
+
+# Instance PyAudioWPatch réutilisée (créée au premier besoin, fermée à l'arrêt).
+_wasapi_handle = None
 
 
 @dataclass(frozen=True)
@@ -103,32 +108,49 @@ def mic_status(device: int | None = None) -> SourceStatus:
 # ----------------------------------------------------------------------
 # Son du système (WASAPI loopback)
 # ----------------------------------------------------------------------
-def _wasapi_loopback() -> dict | None:
-    """Périphérique WASAPI loopback par défaut, ou None."""
-    if sys.platform != "win32":
-        return None
-    try:
-        import pyaudiowpatch as pyaudio
-    except Exception as exc:  # composant absent (Linux, build incomplet)
-        log.info("Capture WASAPI indisponible : %s", exc)
-        return None
+def _handle():
+    """Instance PyAudioWPatch partagée (ou None si indisponible)."""
+    global _wasapi_handle
+    if _wasapi_handle is None and sys.platform == "win32":
+        try:
+            import pyaudiowpatch as pyaudio
 
-    audio = None
+            _wasapi_handle = pyaudio.PyAudio()
+        except Exception as exc:
+            log.info("Capture WASAPI indisponible : %s", exc)
+            _wasapi_handle = None
+    return _wasapi_handle
+
+
+def wasapi_loopback() -> dict | None:
+    """Périphérique loopback par défaut (index inclus), ou None.
+
+    Sert aussi à l'enregistrement d'appel : `index`, `rate` et `channels`
+    sont exactement ce qu'il faut pour ouvrir le flux de capture.
+    """
+    handle = _handle()
+    if handle is None:
+        return None
     try:
-        audio = pyaudio.PyAudio()
-        info = audio.get_default_wasapi_loopback()
-        return {
-            "name": (info.get("name") or "").strip(),
-            "rate": int(info.get("defaultSampleRate") or 48000),
-            "channels": int(info.get("maxInputChannels") or 2),
-        }
+        info = handle.get_default_wasapi_loopback()
     except Exception as exc:
         log.info("Pas de périphérique loopback : %s", exc)
         return None
-    finally:
-        if audio is not None:
-            with contextlib.suppress(Exception):
-                audio.terminate()
+    return {
+        "index": int(info.get("index", -1)),
+        "name": (info.get("name") or "").strip(),
+        "rate": int(info.get("defaultSampleRate") or 48000),
+        "channels": max(1, int(info.get("maxInputChannels") or 2)),
+    }
+
+
+def reset() -> None:
+    """Oublie l'instance et l'état mémorisé (tests, changement de machine)."""
+    global _wasapi_handle
+    if _wasapi_handle is not None:
+        with contextlib.suppress(Exception):
+            _wasapi_handle.terminate()
+        _wasapi_handle = None
 
 
 def active_audio_apps() -> tuple[str, ...]:
@@ -171,24 +193,16 @@ def system_status() -> SourceStatus:
             available=False,
             detail="Windows pour l'instant",
         )
-    try:
-        import pyaudiowpatch  # noqa: F401
-    except Exception:
-        return SourceStatus(
-            KIND_SYSTEM,
-            "Son du système",
-            available=False,
-            detail="composant de capture absent de cette version",
-        )
 
-    info = _wasapi_loopback()
+    info = wasapi_loopback()
     if info is None:
-        return SourceStatus(
-            KIND_SYSTEM,
-            "Son du système",
-            available=False,
-            detail="aucune sortie audio détectée",
-        )
+        try:
+            import pyaudiowpatch  # noqa: F401
+        except Exception:
+            detail = "composant de capture absent de cette version"
+        else:
+            detail = "aucune sortie audio détectée"
+        return SourceStatus(KIND_SYSTEM, "Son du système", available=False, detail=detail)
     return SourceStatus(
         KIND_SYSTEM,
         "Son du système",
@@ -223,6 +237,8 @@ __all__ = [
     "active_audio_apps",
     "detect",
     "mic_status",
+    "reset",
     "status_dot",
     "system_status",
+    "wasapi_loopback",
 ]

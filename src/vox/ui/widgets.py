@@ -249,6 +249,7 @@ STATUS_COLORS = {
     "ok": "#3ecf8e",
     "warn": "#f0a92e",
     "error": "#e2555f",
+    "recording": "#ff4d4d",
 }
 
 

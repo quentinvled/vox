@@ -31,6 +31,7 @@ STATUS_LABELS: dict[str, str] = {
 }
 
 KIND_IMPORT = "import"
+KIND_CALL = "appel"
 
 
 def _count_words(transcript: Transcript) -> int:
@@ -69,6 +70,8 @@ class ImportEntry:
     error: str = ""
     speakers: list[str] = field(default_factory=list)
     language: str = ""
+    # « import » (fichier choisi par l'utilisateur) ou « appel » (enregistré par Vox).
+    kind: str = KIND_IMPORT
     extras: dict = field(default_factory=dict)
 
     # --------------------------------------------------------------
@@ -251,6 +254,7 @@ def add(
     error: str = "",
     elapsed: float = 0.0,
     at: str = "",
+    kind: str = KIND_IMPORT,
 ) -> ImportEntry:
     """Range un import dans la bibliotheque et renvoie son entree."""
     moment = datetime.now()
@@ -264,6 +268,7 @@ def add(
             source=source_path,
             status=status,
             error=error,
+            kind=kind,
         )
     else:
         transcript.source = source_path
@@ -275,6 +280,7 @@ def add(
         entry.source = source_path
         entry.status = status or "ok"
         entry.error = error
+        entry.kind = kind
     if elapsed:
         entry.extras["duree_traitement"] = round(elapsed, 1)
     if transcript is not None:
@@ -409,6 +415,7 @@ def stats() -> dict:
 
 
 __all__ = [
+    "KIND_CALL",
     "KIND_IMPORT",
     "STATUS_LABELS",
     "ImportEntry",

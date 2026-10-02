@@ -16,7 +16,9 @@ transcript cliquable et export md/txt/srt/vtt/json — import par le bouton
 l'onglet **Réglages → Importer** (glisser-déposer, modèle, diarisation, nombre
 de personnes, estimation du coût, progression en arrière-plan).
 L'état des entrées audio (micro, son du système, applications en cours) est
-visible dans la zone de notification.
+visible dans la zone de notification, testé en continu. Un clic sur
+**« Enregistrer un appel (micro + son système)… »** capture l'appel en deux
+pistes — il est transcrit puis rangé dans la bibliothèque.
 
 ## Télécharger
 

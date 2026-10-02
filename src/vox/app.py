@@ -8,6 +8,7 @@ import logging
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal
@@ -15,7 +16,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QSystemTrayIcon
 
-from . import __version__, injector, library, models, recordings, sounds, sources, updates
+from . import __version__, calls, injector, library, models, recordings, sounds, sources, updates
 from . import config as config_module
 from .api import Client
 from .autostart import set_autostart
@@ -29,15 +30,18 @@ from .imports import (
 )
 from .models import Catalogue
 from .naming import infer_speaker_names
+from .paths import calls_dir
 from .pipeline import Pipeline
+from .recorder import Recorder, RecorderError, SystemRecorder
 from .reword import TONES
+from .stats import format_duration
 from .transcript import Transcript
 from .ui.history_window import RecordingsWindow
 from .ui.overlay import Overlay
 from .ui.settings_window import SettingsWindow
 from .ui.stats_window import StatsWindow
 from .ui.theme import app_qss, build_palette
-from .ui.tray import Tray
+from .ui.tray import Tray, format_elapsed
 from .ui.widgets import make_app_icon
 
 log = logging.getLogger("vox")
@@ -46,6 +50,12 @@ SERVER_NAME = "vox-single-instance"
 
 # Duree d'affichage d'un message d'erreur quand la pilule se cache d'elle-meme.
 NOTICE_SECONDS = 6
+
+# Enregistrement d'appel : deux pistes (micro + son du systeme), 4 h maximum ;
+# en dessous de ce seuil, c'est un appui accidentel : on ne garde rien.
+CALL_TITLE = "Enregistrement de l'appel"
+MAX_CALL_SECONDS = 4 * 3600
+MIN_CALL_SECONDS = 1.5
 
 
 class _CatalogueLoader(QThread):
@@ -99,6 +109,40 @@ class _UpdateDownloader(QThread):
             self.failed.emit(str(exc))
             return
         self.done.emit(path)
+
+
+def _clean_import_transcript(
+    transcript: Transcript,
+    settings: Settings,
+    cancel: threading.Event | None = None,
+    progress=None,
+) -> bool:
+    """Nettoyage editorial automatique. Ne fait jamais echouer l'import.
+
+    Renvoie True si le texte a effectivement ete retravaille (auquel cas
+    l'appelant conserve une copie brute a cote).
+    """
+    if cancel is not None and cancel.is_set():
+        transcript.warnings.append("Nettoyage ignoré : traitement annulé.")
+        return False
+    try:
+        report = clean_transcript_with_settings(
+            transcript, settings, progress=progress, cancel=cancel
+        )
+    except Exception as exc:
+        transcript.warnings.append(f"Nettoyage ignoré : {exc}")
+        return False
+    cost = float(report.get("cout", 0.0) or 0.0)
+    if cost:
+        transcript.cost = round(transcript.cost + cost, 8)
+    if report.get("annule"):
+        transcript.warnings.append("Nettoyage interrompu : texte brut conservé.")
+        return False
+    if report.get("blocs_en_echec"):
+        transcript.warnings.append(
+            f"Nettoyage partiel : {report['blocs_en_echec']} bloc(s) laissé(s) brut(s)."
+        )
+    return bool(report.get("segments_modifies"))
 
 
 class _ImportWorker(QThread):
@@ -177,38 +221,19 @@ class _ImportWorker(QThread):
                 self.imported.emit(entry.id)
 
     def _clean(self, transcript: Transcript) -> bool:
-        """Nettoyage editorial automatique. Ne fait jamais echouer l'import.
-
-        Renvoie True si le texte a effectivement ete retravaille (auquel cas
-        l'appelant conserve une copie brute a cote).
-        """
+        """Nettoyage editorial automatique, avec la progression dans l'UI."""
         if self.cancel.is_set():
             transcript.warnings.append("Nettoyage ignoré : import annulé.")
             return False
         self.progress.emit(0, 0, "Nettoyage éditorial…")
-        try:
-            report = clean_transcript_with_settings(
-                transcript,
-                self._settings,
-                progress=lambda done, total: self.progress.emit(
-                    done, total, f"Nettoyage éditorial : {done}/{total} bloc(s)"
-                ),
-                cancel=self.cancel,
-            )
-        except Exception as exc:
-            transcript.warnings.append(f"Nettoyage ignoré : {exc}")
-            return False
-        cost = float(report.get("cout", 0.0) or 0.0)
-        if cost:
-            transcript.cost = round(transcript.cost + cost, 8)
-        if report.get("annule"):
-            transcript.warnings.append("Nettoyage interrompu : texte brut conservé.")
-            return False
-        if report.get("blocs_en_echec"):
-            transcript.warnings.append(
-                f"Nettoyage partiel : {report['blocs_en_echec']} bloc(s) laissé(s) brut(s)."
-            )
-        return bool(report.get("segments_modifies"))
+        return _clean_import_transcript(
+            transcript,
+            self._settings,
+            self.cancel,
+            progress=lambda done, total: self.progress.emit(
+                done, total, f"Nettoyage éditorial : {done}/{total} bloc(s)"
+            ),
+        )
 
     def _on_progress(self, progress: Progress) -> None:
         message = progress.message
@@ -216,6 +241,83 @@ class _ImportWorker(QThread):
             name = Path(self._paths[self._file_position - 1]).name
             message = f"[{self._file_position}/{len(self._paths)}] {name} — {message}"
         self.progress.emit(progress.done, progress.total, message)
+
+
+class _CallTranscriber(QThread):
+    """Transcrit les deux pistes d'un appel et cree l'entree de bibliotheque."""
+
+    progress = Signal(int, int, str)
+    done = Signal(str)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        mic_path: Path,
+        system_path: Path | None,
+        offset: float,
+        title: str,
+        settings: Settings,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._mic_path = mic_path
+        self._system_path = system_path
+        self._offset = offset
+        self._title = title
+        self._settings = settings
+        self.cancel = threading.Event()
+
+    def stop(self) -> None:
+        self.cancel.set()
+
+    def run(self) -> None:
+        try:
+            transcript = calls.process_call(
+                self._mic_path,
+                self._system_path,
+                self._settings,
+                offset=self._offset,
+                title=self._title,
+                progress=self._on_progress,
+                cancel=self.cancel,
+            )
+        except ImportCancelled:
+            self.failed.emit("Transcription annulée.")
+            return
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+
+        raw_copy: Transcript | None = None
+        if self._settings.clean_imports:
+            raw_copy = copy.deepcopy(transcript)
+            if not self._clean(transcript):
+                raw_copy = None
+        entry = library.add(
+            transcript,
+            self._mic_path,
+            title=self._title,
+            kind=library.KIND_CALL,
+        )
+        if raw_copy is not None:
+            library.save_raw_copy(entry.id, raw_copy)
+        self.done.emit(entry.id)
+
+    def _clean(self, transcript: Transcript) -> bool:
+        if self.cancel.is_set():
+            return False
+        self.progress.emit(0, 0, "Nettoyage éditorial…")
+        return _clean_import_transcript(
+            transcript,
+            self._settings,
+            self.cancel,
+            progress=lambda done, total: self.progress.emit(
+                done, total, f"Nettoyage éditorial : {done}/{total} bloc(s)"
+            ),
+        )
+
+    def _on_progress(self, item: Progress) -> None:
+        self.progress.emit(item.done, item.total, item.message)
 
 
 class _NamesWorker(QThread):
@@ -273,6 +375,13 @@ class VoxApp(QObject):
         self._imported_ids: list[str] = []
         self._import_errors: list[str] = []
         self._import_cancelled = False
+        self._call_mic: Recorder | None = None
+        self._call_system: SystemRecorder | None = None
+        self._call_started_at = 0.0
+        self._call_offset = 0.0
+        self._call_paths: tuple[Path, Path | None] = (Path(), None)
+        self._call_worker: _CallTranscriber | None = None
+        self._call_warned_hotkey = False
 
         self.pipeline = Pipeline(self.settings)
         self.hotkey = HotkeyManager(
@@ -311,6 +420,7 @@ class VoxApp(QObject):
         self.tray.import_requested.connect(self.choose_import_files)
         self.tray.audio_refresh_requested.connect(self.refresh_audio_status)
         self.tray.audio_test_requested.connect(self.test_audio_inputs)
+        self.tray.call_toggle_requested.connect(self.toggle_call_recording)
         self.tray.update_requested.connect(self.open_update)
         self.tray.quit_requested.connect(self.quit)
         self.tray.model_selected.connect(self.set_model)
@@ -325,6 +435,7 @@ class VoxApp(QObject):
         self.overlay.reinsert_requested.connect(self.pipeline.reinsert_last)
         self.overlay.copy_requested.connect(self.pipeline.copy_last)
         self.overlay.library_requested.connect(self.open_recordings)
+        self.overlay.stop_recording_requested.connect(self.stop_call_recording)
         self.overlay.settings_requested.connect(self.open_settings)
         self.overlay.moved.connect(self._on_overlay_moved)
 
@@ -346,6 +457,18 @@ class VoxApp(QObject):
         self._clock_timer = QTimer(self)
         self._clock_timer.setInterval(200)
         self._clock_timer.timeout.connect(self._tick_clock)
+
+        # Test permanent des entrees audio : la pastille de l'icone et le menu
+        # disent a tout moment ce qui est capturable (cout quasi nul, aucun
+        # flux ouvert).
+        self._audio_timer = QTimer(self)
+        self._audio_timer.setInterval(5000)
+        self._audio_timer.timeout.connect(self.refresh_audio_status)
+
+        # Chrono et niveaux de l'enregistrement d'appel.
+        self._call_timer = QTimer(self)
+        self._call_timer.setInterval(200)
+        self._call_timer.timeout.connect(self._tick_call)
 
         # Verification des mises a jour : une fois au demarrage, puis 2x par jour.
         self._update_timer = QTimer(self)
@@ -374,6 +497,8 @@ class VoxApp(QObject):
         # Les entrees audio (micro, son du systeme) sont detectees apres le
         # demarrage : la pastille de l'icone renseigne tout de suite.
         QTimer.singleShot(1500, self.refresh_audio_status)
+        # Puis testees en continu, toutes les 5 s.
+        self._audio_timer.start()
         self._hotkey_timer.start()
         self._load_catalogue()
 
@@ -510,6 +635,15 @@ class VoxApp(QObject):
     def _drain_hotkey(self) -> None:
         for event in self.hotkey.drain():
             if event == EVENT_START:
+                if self.call_recording:
+                    if not self._call_warned_hotkey:
+                        self._call_warned_hotkey = True
+                        self._on_notice(
+                            "info",
+                            "Enregistrement d'appel en cours : arrête-le avec ■ "
+                            "(pilule) ou le menu de l'icône.",
+                        )
+                    continue
                 self._pending_enter = False
                 self.pipeline.start_recording()
             elif event == EVENT_STOP:
@@ -881,6 +1015,225 @@ class VoxApp(QObject):
             8000,
         )
 
+    # ------------------------------------------------------------------
+    # Enregistrement d'appel (micro + son du systeme)
+    # ------------------------------------------------------------------
+    @property
+    def call_recording(self) -> bool:
+        return bool(self._call_mic is not None and self._call_mic.recording)
+
+    def toggle_call_recording(self) -> None:
+        if self.call_recording:
+            self.stop_call_recording()
+        else:
+            self.start_call_recording()
+
+    def start_call_recording(self) -> None:
+        """Un clic : micro + son du systeme, deux pistes, transcription a l'arret."""
+        if self.call_recording:
+            return
+        if self.pipeline.recording:
+            self._on_notice("info", "Termine la dictée en cours avant d'enregistrer un appel.")
+            return
+        if self._call_worker is not None and self._call_worker.isRunning():
+            self._on_notice("info", "Un appel est déjà en cours de transcription.")
+            return
+        if self._import_worker is not None and self._import_worker.isRunning():
+            self._on_notice("info", "Un import est en cours : termine-le d'abord.")
+            return
+
+        mic = Recorder(
+            samplerate=self.settings.sample_rate,
+            device=self.settings.input_device,
+            max_seconds=MAX_CALL_SECONDS,
+        )
+        # Le micro des dictées garde le périphérique « chaud » : on le libère le
+        # temps de l'appel (deux flux simultanés sur le même micro ne passent
+        # pas sur tous les pilotes).
+        self.pipeline.recorder.close()
+        try:
+            mic.start()
+        except RecorderError as exc:
+            mic.close()
+            self.pipeline.recorder.warm()
+            self._on_notice("error", str(exc))
+            return
+        started_at = time.monotonic()
+
+        system_info = sources.wasapi_loopback()
+        system = SystemRecorder(system_info) if system_info else None
+        offset = 0.0
+        if system is not None:
+            try:
+                system.start()
+            except RecorderError as exc:
+                system.close()
+                system = None
+                self._on_notice(
+                    "info",
+                    f"Son du système indisponible ({exc}) : seul le micro est enregistré.",
+                )
+            else:
+                offset = max(0.0, time.monotonic() - started_at)
+
+        folder = calls_dir()
+        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        mic_path = folder / f"{stamp}_micro.wav"
+        system_path = folder / f"{stamp}_systeme.wav" if system is not None else None
+
+        self._call_mic = mic
+        self._call_system = system
+        self._call_started_at = started_at
+        self._call_offset = offset
+        self._call_paths = (mic_path, system_path)
+        self._call_warned_hotkey = False
+
+        self.overlay.set_call_recording(True)
+        self.overlay.set_state("recording", detail="Démarrage…", title=CALL_TITLE)
+        self.overlay.show_pill()
+        self.tray.set_call_state(True, 0)
+        self.tray.set_status("Enregistrement d'appel…")
+        self._call_timer.start()
+        sources_label = "micro + son du système" if system is not None else "micro seulement"
+        self.tray.showMessage(
+            "Vox — enregistrement d'appel",
+            f"Enregistrement en cours ({sources_label}). Arrête avec le bouton ■ de la "
+            "pilule ou « Arrêter l'enregistrement » dans le menu de l'icône.",
+            QSystemTrayIcon.Information,
+            9000,
+        )
+
+    def stop_call_recording(self) -> None:
+        """Arrête l'enregistrement, écrit les pistes, lance la transcription."""
+        mic = self._call_mic
+        if mic is None:
+            return
+        system = self._call_system
+        duration = time.monotonic() - self._call_started_at
+        self._call_timer.stop()
+
+        mic_wav = mic.stop()
+        mic_ok = mic.has_speech
+        mic.close()
+        system_wav = b""
+        system_ok = False
+        if system is not None:
+            system_wav = system.stop()
+            system_ok = system.has_speech
+            system.close()
+
+        self._call_mic = None
+        self._call_system = None
+        self.overlay.set_call_recording(False)
+        self.overlay.set_state("idle", detail=f"{self.hotkey_label} pour dicter")
+        self.tray.set_call_state(False)
+        self.tray.set_status("Prêt")
+        # Le micro redevient « chaud » pour les dictées.
+        self.pipeline.recorder.warm()
+
+        mic_path, system_path = self._call_paths
+        if not mic_wav or duration < MIN_CALL_SECONDS or not (mic_ok or system_ok):
+            self._on_notice("info", "Rien d'exploitable dans cet enregistrement.")
+            return
+
+        saved_system: Path | None = None
+        try:
+            mic_path.write_bytes(mic_wav)
+            if system_wav and system_path is not None:
+                # On garde la piste système même silencieuse (c'est une preuve),
+                # mais on ne la transcrit que si elle contient quelque chose.
+                system_path.write_bytes(system_wav)
+                if system_ok:
+                    saved_system = system_path
+        except OSError as exc:
+            self._on_notice("error", f"Écriture de l'enregistrement impossible : {exc}")
+            return
+
+        title = f"Appel — {datetime.now().strftime('%d/%m %H:%M')}"
+        self._on_notice(
+            "info",
+            f"Enregistrement terminé ({format_duration(duration)}) : transcription en cours…",
+        )
+        self.start_call_transcription(mic_path, saved_system, self._call_offset, title)
+
+    def cancel_call_recording(self) -> None:
+        """Abandon silencieux (fermeture de l'application, par exemple)."""
+        mic, system = self._call_mic, self._call_system
+        self._call_mic = None
+        self._call_system = None
+        self._call_timer.stop()
+        if mic is not None:
+            mic.cancel()
+            mic.close()
+        if system is not None:
+            system.cancel()
+            system.close()
+        if mic is not None or system is not None:
+            self.pipeline.recorder.warm()
+
+    def start_call_transcription(
+        self, mic_path: Path, system_path: Path | None, offset: float, title: str
+    ) -> None:
+        worker = _CallTranscriber(
+            mic_path, system_path, offset, title, self.settings, parent=self
+        )
+        worker.progress.connect(self._on_call_progress)
+        worker.done.connect(self._on_call_done)
+        worker.failed.connect(self._on_call_failed)
+        worker.finished.connect(self._on_call_finished)
+        self._call_worker = worker
+        self.overlay.set_state("transcribing", detail="Transcription de l'appel…")
+        self.overlay.show_pill()
+        self.tray.set_status("Transcription de l'appel…")
+        worker.start()
+
+    def _on_call_progress(self, done: int, total: int, message: str) -> None:
+        if message:
+            self.overlay.set_state("transcribing", detail=message)
+        if self._recordings_window is not None:
+            self._recordings_window.set_import_progress(done, total, message)
+        if self._settings_window is not None:
+            self._settings_window.set_import_progress(done, total, message)
+
+    def _on_call_done(self, entry_id: str) -> None:
+        entry = library.get(entry_id)
+        label = entry.label if entry is not None else "L'appel"
+        self._on_notice("info", f"{label} est dans la bibliothèque.")
+        if self._recordings_window is not None:
+            self._recordings_window.on_imported(entry_id)
+        self.tray.showMessage(
+            "Vox — appel transcrit",
+            "Ouvre la bibliothèque pour relire et nommer les interlocuteurs.",
+            QSystemTrayIcon.Information,
+            6000,
+        )
+
+    def _on_call_failed(self, message: str) -> None:
+        self._on_notice("error", f"Transcription de l'appel impossible : {message}")
+
+    def _on_call_finished(self) -> None:
+        self._call_worker = None
+        self.tray.set_status("Prêt")
+
+    def _tick_call(self) -> None:
+        mic = self._call_mic
+        if mic is None:
+            return
+        elapsed = int(time.monotonic() - self._call_started_at)
+        level = mic.level
+        if self._call_system is not None:
+            level = max(level, self._call_system.level)
+        self.overlay.push_level(level)
+        pistes = "micro + système" if self._call_system is not None else "micro"
+        self.overlay.set_state(
+            "recording",
+            detail=f"{format_elapsed(elapsed)}  ·  {pistes}  ·  ■ pour arrêter",
+            title=CALL_TITLE,
+        )
+        self.tray.set_call_state(True, elapsed)
+        if mic.hit_max or (self._call_system is not None and self._call_system.hit_max):
+            self.stop_call_recording()
+
     def choose_import_files(self) -> None:
         """Choisit des fichiers audio à importer, puis ouvre la bibliothèque."""
         paths, _ = QFileDialog.getOpenFileNames(
@@ -1166,10 +1519,13 @@ class VoxApp(QObject):
         self._level_timer.stop()
         self._clock_timer.stop()
         self._update_timer.stop()
+        self._audio_timer.stop()
+        self._call_timer.stop()
         self.hotkey.stop()
-        for worker in (self._import_worker, self._names_worker):
+        self.cancel_call_recording()
+        for worker in (self._import_worker, self._names_worker, self._call_worker):
             if worker is not None and worker.isRunning():
-                if isinstance(worker, _ImportWorker):
+                if isinstance(worker, (_ImportWorker, _CallTranscriber)):
                     worker.stop()
                 worker.wait(3000)
         self.pipeline.shutdown()

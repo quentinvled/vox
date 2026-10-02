@@ -55,6 +55,13 @@ def recordings_index_file() -> Path:
     return data_dir() / "enregistrements.jsonl"
 
 
+def calls_dir() -> Path:
+    """Pistes audio des appels enregistres par Vox (micro + systeme)."""
+    path = data_dir() / "appels"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def library_dir() -> Path:
     """Imports : index, transcripts et exports generes par l'application."""
     path = data_dir() / "bibliotheque"

@@ -5,7 +5,17 @@ from __future__ import annotations
 import sys
 import types
 
+import pytest
+
 from vox import sources
+
+
+@pytest.fixture(autouse=True)
+def _reset_probe():
+    """L'instance PyAudio partagee ne doit pas fuiter entre les tests."""
+    sources.reset()
+    yield
+    sources.reset()
 
 
 # ----------------------------------------------------------------------
@@ -78,6 +88,43 @@ def test_system_status_is_windows_only(monkeypatch) -> None:
     status = sources.system_status()
     assert not status.available
     assert "Windows" in status.detail
+
+
+def test_wasapi_loopback_exposes_index_and_is_cached(monkeypatch) -> None:
+    created: list[object] = []
+
+    class _FakeAudio:
+        def __init__(self):
+            created.append(self)
+
+        def get_default_wasapi_loopback(self):
+            return {
+                "index": 7,
+                "name": "Haut-parleurs (Realtek)",
+                "defaultSampleRate": 44100,
+                "maxInputChannels": 2,
+            }
+
+        def terminate(self):
+            pass
+
+    module = types.ModuleType("pyaudiowpatch")
+    module.PyAudio = _FakeAudio
+    monkeypatch.setattr(sources.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", module)
+
+    first = sources.wasapi_loopback()
+    second = sources.wasapi_loopback()
+    assert first == second
+    assert first["index"] == 7
+    assert first["rate"] == 44100
+    assert first["channels"] == 2
+    assert len(created) == 1  # l'instance est reutilisee, pas recreee
+
+    sources.reset()
+    third = sources.wasapi_loopback()
+    assert third == first
+    assert len(created) == 2  # apres reset, une nouvelle instance
 
 
 def test_system_status_detects_loopback(monkeypatch) -> None:

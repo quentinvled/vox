@@ -63,16 +63,24 @@ restent utilisables en texte seul, avec un avertissement dans le transcript.
 
 | Étape | Contenu | État |
 |---|---|---|
-| 2.0 | Détection des entrées (micro + WASAPI loopback + apps qui jouent du son), indicateurs dans la zone de notification, import accessible depuis la pilule et le menu | [~] |
-| 2.1 | Capture du son système (WASAPI loopback) | [ ] |
-| 2.2 | Double piste micro + système, fichiers séparés, mixage à l'export | [ ] |
-| 2.3 | Modes micro / système / les deux dans le menu et les réglages | [ ] |
-| 2.4 | Pilule d'enregistrement (chrono, niveaux, pause, arrêt) | [ ] |
-| 2.5 | Transcription automatique à l'arrêt (réglage, coût affiché) | [ ] |
+| 2.0 | Détection des entrées (micro + WASAPI loopback + apps qui jouent du son), indicateurs **testés en continu** (pastille sur l'icône, menu coloré, cliquable), import accessible depuis la pilule et le menu | [x] |
+| 2.1 | Capture du son système (WASAPI loopback, `SystemRecorder`, rééchantillonnage 16 kHz) | [x] |
+| 2.2 | Double piste micro + système, fichiers séparés, mixage à l'export | [~] |
+| 2.3 | Modes micro / système / les deux dans le menu et les réglages | [~] |
+| 2.4 | Pilule d'enregistrement (chrono, niveaux, arrêt) | [~] |
+| 2.5 | Transcription automatique à l'arrêt (réglage, coût affiché) | [~] |
 | 2.6 | Pièges : Bluetooth HFP, mode exclusif WASAPI, périphérique débranché | [ ] |
 
-**Test n°2** : enregistrer un appel réel, vérifier les deux pistes et la
-diarisation « gratuite » (Moi / Interlocuteur).
+**Test n°2 (prêt, à faire sur Windows)** : le menu de l'icône propose
+**« Enregistrer un appel (micro + son système)… »** — un clic démarre les deux
+pistes, la pilule affiche le chrono, les niveaux et un bouton **■** (elle peut
+être masquée, l'enregistrement continue), le menu propose
+**« Arrêter l'enregistrement (mm:ss) »**. À l'arrêt : les deux WAV sont écrits
+dans `appels/`, la transcription part toute seule (piste micro = « Moi »,
+piste système diarisée = « Interlocuteur 1…n »), puis l'entrée apparaît dans
+la bibliothèque, filtre **Appels**. À vérifier : le son système est bien capté,
+les deux pistes se recollent au bon moment, et une note vocale (vocal WhatsApp
+joué en haut-parleurs) fonctionne aussi.
 
 ## Lot 3 — Détecter les appels
 
@@ -109,6 +117,20 @@ l'agent.
 
 ## Journal
 
+- **02/10/2026 (appels)** — l'assistant enregistre les appels **en un clic** :
+  « Enregistrer un appel (micro + son système)… » dans le menu de l'icône, ou
+  la même entrée qui devient « Arrêter l'enregistrement (mm:ss) ». Deux pistes
+  (micro = toi, loopback = interlocuteurs), chrono et niveaux dans la pilule
+  avec un bouton **■** ; la pilule peut être masquée ou la fenêtre réduite,
+  l'enregistrement continue et l'icône passe au rouge. À l'arrêt, les pistes
+  sont écrites dans `appels/`, transcrites séparément (micro sans diarisation,
+  système diarisé) puis recollées sur une même ligne de temps
+  (`calls.merge_tracks`, décalage des deux flux), nettoyées si l'option est
+  active, et rangées dans la bibliothèque (filtre **Appels**, icône 📞).
+  Corrigé au passage : les pastilles du menu « Entrées audio » étaient
+  **grisées** (Windows grise les entrées désactivées) — elles sont maintenant
+  colorées et cliquables, et le test des entrées tourne **en continu** toutes
+  les 5 s sans ouvrir de flux. 123 tests.
 - **02/10/2026 (import assisté)** — l'import a désormais son **onglet
   « Importer »** dans les réglages : on y glisse-dépose (ou on ajoute) des
   fichiers, on voit pour chacun sa taille et l'estimation (durée + coût), on

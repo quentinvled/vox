@@ -12,6 +12,15 @@ from ..sources import KIND_MIC, KIND_SYSTEM, SourceStatus, status_dot
 from .widgets import make_app_icon, make_dot_icon
 
 
+def format_elapsed(seconds: int) -> str:
+    """Chrono court : « 05:32 », « 1:12:07 » au-delà d'une heure."""
+    minutes, secs = divmod(max(0, int(seconds)), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
 class Tray(QSystemTrayIcon):
     toggle_requested = Signal()
     show_requested = Signal()
@@ -31,6 +40,7 @@ class Tray(QSystemTrayIcon):
     update_requested = Signal()
     audio_refresh_requested = Signal()
     audio_test_requested = Signal()
+    call_toggle_requested = Signal()
 
     def __init__(
         self,
@@ -50,6 +60,7 @@ class Tray(QSystemTrayIcon):
         self._show_in_taskbar = show_in_taskbar
         self._status_text = ""
         self._audio_statuses: list[SourceStatus] = []
+        self._call_recording = False
 
         self._menu = QMenu()
         self._build()
@@ -104,13 +115,23 @@ class Tray(QSystemTrayIcon):
         self.toggle_action.triggered.connect(self.toggle_requested.emit)
         self._menu.addAction(self.toggle_action)
 
+        self.call_action = QAction("Enregistrer un appel (micro + son système)…", self._menu)
+        self.call_action.setToolTip(
+            "Enregistre l'appel en deux pistes — toi et tes interlocuteurs — puis "
+            "le transcrit et le range dans la bibliothèque"
+        )
+        self.call_action.triggered.connect(self.call_toggle_requested.emit)
+        self._menu.addAction(self.call_action)
+
         # --- entrees audio : etat du micro et du son du systeme ---
         self.audio_menu = self._menu.addMenu("Entrées audio")
         self.mic_action = QAction("Micro : …", self.audio_menu)
-        self.mic_action.setEnabled(False)
+        self.mic_action.setToolTip("Clique pour vérifier les entrées audio maintenant")
+        self.mic_action.triggered.connect(self.audio_test_requested.emit)
         self.audio_menu.addAction(self.mic_action)
         self.system_action = QAction("Son du système : …", self.audio_menu)
-        self.system_action.setEnabled(False)
+        self.system_action.setToolTip("Clique pour vérifier les entrées audio maintenant")
+        self.system_action.triggered.connect(self.audio_test_requested.emit)
         self.audio_menu.addAction(self.system_action)
         self.audio_menu.addSeparator()
         audio_test = QAction("Tester les entrées…", self.audio_menu)
@@ -249,9 +270,35 @@ class Tray(QSystemTrayIcon):
                 continue
             action.setText(status.summary)
             action.setIcon(make_dot_icon("ok" if status.available else "error"))
-        if self._audio_statuses:
+        if self._audio_statuses and not self._call_recording:
             self.setIcon(make_app_icon(dot=status_dot(self._audio_statuses)))
+        if not self._call_recording:
+            self.call_action.setIcon(self._call_icon())
         self._refresh_tooltip()
+
+    def set_call_state(self, recording: bool, elapsed: int = 0) -> None:
+        """Texte et pastille de l'entree « Enregistrer un appel »."""
+        self._call_recording = bool(recording)
+        if self._call_recording:
+            self.call_action.setText(
+                f"Arrêter l'enregistrement ({format_elapsed(elapsed)})"
+            )
+            self.call_action.setIcon(make_dot_icon("recording"))
+            self.setIcon(make_app_icon(dot="recording"))
+        else:
+            self.call_action.setText("Enregistrer un appel (micro + son système)…")
+            self.call_action.setIcon(self._call_icon())
+            if self._audio_statuses:
+                self.setIcon(make_app_icon(dot=status_dot(self._audio_statuses)))
+
+    def _call_icon(self):
+        """Pastille de disponibilité : le son du système est-il capturable ?"""
+        system = next(
+            (item for item in self._audio_statuses if item.kind == KIND_SYSTEM), None
+        )
+        if system is None:
+            return make_dot_icon("warn")
+        return make_dot_icon("ok" if system.available else "warn")
 
     def _refresh_tooltip(self) -> None:
         lines = [f"Vox {__version__}"]
