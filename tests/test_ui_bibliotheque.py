@@ -128,6 +128,8 @@ def test_settings_processing_tab_roundtrip(qapp, tmp_path: Path) -> None:
         import_parallel=2,
         import_merge_speakers=False,
         clean_imports=False,
+        import_diarize=False,
+        import_speakers=2,
     )
     window = SettingsWindow(settings, models.fallback("openrouter"))
     try:
@@ -137,6 +139,8 @@ def test_settings_processing_tab_roundtrip(qapp, tmp_path: Path) -> None:
         assert values.import_parallel == 2
         assert values.import_merge_speakers is False
         assert values.clean_imports is False
+        assert values.import_diarize is False
+        assert values.import_speakers == 2
     finally:
         window.deleteLater()
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QKeyEvent
@@ -12,12 +13,15 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -27,14 +31,39 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__, recordings
-from ..api import PROVIDERS, Client
-from ..config import HOTKEY_CHOICES, HOTKEY_MODIFIERS, Settings
+from .. import __version__, audiofiles, library, recordings
+from ..api import PROVIDERS, Client, diarizes_by_default
+from ..config import DEFAULT_DIARIZATION_MODEL, HOTKEY_CHOICES, HOTKEY_MODIFIERS, Settings
 from ..models import Catalogue
 from ..models import label as model_label
 from ..recorder import list_input_devices
 from ..reword import TONES
+from ..stats import format_duration, format_money
 from .wheel import NoWheelComboBox, NoWheelDoubleSpinBox, NoWheelSpinBox
+
+# Fichiers audio acceptés à l'import (mêmes formats que la bibliothèque).
+AUDIO_FILTER = (
+    "Audio (*.mp3 *.m4a *.wav *.ogg *.flac *.aac *.opus *.wma *.mp4 *.mkv *.webm);;"
+    "Tous les fichiers (*)"
+)
+
+IMPORT_HINT = (
+    "L'import tourne en arrière-plan : tu peux réduire cette fenêtre ou passer "
+    "à un autre onglet, il continue. Chaque fichier rejoint la bibliothèque dès "
+    "qu'il est prêt."
+)
+
+
+def _file_size(path: str) -> str:
+    try:
+        size = float(Path(path).stat().st_size)
+    except OSError:
+        return "?"
+    for unit in ("o", "Ko", "Mo", "Go"):
+        if size < 1024 or unit == "Go":
+            return f"{size:.0f} {unit}" if unit == "o" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} Go"
 
 LANGUAGES: list[tuple[str, str]] = [
     ("", "Détection automatique"),
@@ -137,6 +166,42 @@ class _KeyTester(QThread):
         self.tested.emit(True, detail)
 
 
+class _FileDropList(QListWidget):
+    """Liste de fichiers qui accepte le glisser-déposer depuis l'explorateur."""
+
+    files_dropped = Signal(list)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setSelectionMode(QListWidget.ExtendedSelection)
+        self.setAlternatingRowColors(False)
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        paths = [
+            url.toLocalFile()
+            for url in event.mimeData().urls()
+            if url.isLocalFile()
+        ]
+        if paths:
+            self.files_dropped.emit(paths)
+            event.acceptProposedAction()
+            return
+        super().dropEvent(event)
+
+
 class SettingsWindow(QDialog):
     """Boîte de dialogue de configuration."""
 
@@ -144,6 +209,8 @@ class SettingsWindow(QDialog):
     dashboard_requested = Signal()
     check_requested = Signal(str)
     update_requested = Signal()
+    import_requested = Signal(list, dict)
+    import_cancel_requested = Signal()
 
     def __init__(self, settings: Settings, catalogue: Catalogue, parent=None) -> None:
         super().__init__(parent)
@@ -157,6 +224,7 @@ class SettingsWindow(QDialog):
         self._active_provider: str = settings.provider
         self._capturing = False
         self._captured = False
+        self._import_running = False
         self.custom_hotkey = ""
 
         self._build()
@@ -188,6 +256,7 @@ class SettingsWindow(QDialog):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._scrollable(self._build_general()), "Général")
+        self.tabs.addTab(self._scrollable(self._build_import()), "Importer")
         self.tabs.addTab(self._scrollable(self._build_audio()), "Audio")
         self.tabs.addTab(self._scrollable(self._build_output()), "Sortie")
         self.tabs.addTab(self._scrollable(self._build_reword()), "Reformulation")
@@ -609,30 +678,321 @@ class SettingsWindow(QDialog):
         outer.addStretch(1)
         return page
 
+    # ------------------------------------------------------------------
+    # Importer : l'assistant d'import (fichiers, options, progression)
+    # ------------------------------------------------------------------
+    def _build_import(self) -> QWidget:
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(4, 12, 4, 4)
+
+        # --- fichiers a importer ---
+        files_box = QGroupBox("Fichiers à importer")
+        files_layout = QVBoxLayout(files_box)
+        files_layout.setSpacing(8)
+
+        self.import_files_list = _FileDropList()
+        self.import_files_list.setMinimumHeight(110)
+        self.import_files_list.setToolTip(
+            "Glisse-dépose des fichiers audio (appel, réunion, vocal WhatsApp) "
+            "ici, ou utilise « Ajouter des fichiers… »."
+        )
+        self.import_files_list.files_dropped.connect(self.add_import_files)
+        files_layout.addWidget(self.import_files_list)
+
+        files_actions = QHBoxLayout()
+        files_actions.setSpacing(6)
+
+        self.import_add_button = QPushButton("Ajouter des fichiers…")
+        self.import_add_button.clicked.connect(self._choose_import_files)
+        files_actions.addWidget(self.import_add_button)
+
+        self.import_remove_button = QPushButton("Retirer")
+        self.import_remove_button.setToolTip("Retirer les fichiers sélectionnés de la liste")
+        self.import_remove_button.clicked.connect(self._remove_selected_import_files)
+        files_actions.addWidget(self.import_remove_button)
+
+        self.import_clear_button = QPushButton("Vider")
+        self.import_clear_button.setToolTip("Vider la liste des fichiers à importer")
+        self.import_clear_button.clicked.connect(self._clear_import_files)
+        files_actions.addWidget(self.import_clear_button)
+
+        files_actions.addStretch(1)
+        self.import_estimate_label = QLabel("")
+        self.import_estimate_label.setObjectName("hint")
+        files_actions.addWidget(self.import_estimate_label)
+        files_layout.addLayout(files_actions)
+        outer.addWidget(files_box)
+
+        # --- options ---
+        options_box = QGroupBox("Options avant de lancer")
+        options_form = QFormLayout(options_box)
+
+        self.import_model_combo = NoWheelComboBox()
+        self.import_model_combo.setMinimumWidth(280)
+        self.import_model_combo.addItem("Automatique (recommandé par Vox)", "")
+        for item in self._catalogue.stt:
+            model_id = item.get("id") or ""
+            if model_id:
+                self.import_model_combo.addItem(model_label(item), model_id)
+        self.import_model_combo.setToolTip(
+            "Modèle qui transcrit le fichier importé. « Automatique » utilise le "
+            "modèle recommandé (MAI Transcribe 2), qui sépare les locuteurs."
+        )
+        self.import_model_combo.currentIndexChanged.connect(self._sync_import_options)
+        options_form.addRow("Modèle", self.import_model_combo)
+
+        self.import_diarize_check = QCheckBox("Identifier les locuteurs (diarisation)")
+        self.import_diarize_check.setToolTip(
+            "Décoche pour un texte brut, sans chercher qui parle (utile pour un "
+            "vocal d'une seule personne ou une note vocale)."
+        )
+        self.import_diarize_check.toggled.connect(self._sync_import_options)
+        options_form.addRow("", self.import_diarize_check)
+
+        self.import_speakers_spin = NoWheelSpinBox()
+        self.import_speakers_spin.setRange(0, 8)
+        self.import_speakers_spin.setSpecialValueText("automatique")
+        self.import_speakers_spin.setSuffix(" personne(s)")
+        self.import_speakers_spin.setToolTip(
+            "Indique combien de personnes parlent dans le fichier : Vox s'en sert "
+            "pour raccorder proprement les locuteurs entre les tranches. "
+            "« automatique » laisse Vox décider."
+        )
+        options_form.addRow("Personnes", self.import_speakers_spin)
+
+        self.clean_imports_check = QCheckBox(
+            "Nettoyer après l'import (LLM) : ponctuation, noms propres, « euh »"
+        )
+        self.clean_imports_check.setToolTip(
+            "Une passe de correction est lancée après la transcription, avant de "
+            "ranger le transcript. Coût indicatif : 0,05 à 0,10 $ par heure "
+            "d'audio. Le transcript brut est conservé à côté du nettoyé."
+        )
+        options_form.addRow("", self.clean_imports_check)
+
+        self.import_options_hint = QLabel("")
+        self.import_options_hint.setObjectName("hint")
+        self.import_options_hint.setWordWrap(True)
+        options_form.addRow("", self.import_options_hint)
+
+        outer.addWidget(options_box)
+
+        # --- lancer et progression ---
+        run_box = QGroupBox("Lancer")
+        run_layout = QVBoxLayout(run_box)
+        run_layout.setSpacing(8)
+
+        self.import_start_button = QPushButton("Importer maintenant")
+        self.import_start_button.setObjectName("primary")
+        self.import_start_button.setEnabled(False)
+        self.import_start_button.setToolTip(
+            "La transcription démarre en arrière-plan : la fenêtre peut être "
+            "réduite ou fermée, l'import continue et la bibliothèque se remplit."
+        )
+        self.import_start_button.clicked.connect(self._start_import)
+        run_layout.addWidget(self.import_start_button)
+
+        self.import_progress_frame = QFrame()
+        self.import_progress_frame.setObjectName("panel")
+        progress_layout = QHBoxLayout(self.import_progress_frame)
+        progress_layout.setContentsMargins(12, 8, 12, 8)
+        progress_layout.setSpacing(10)
+        self.import_progress_label = QLabel("Préparation…")
+        progress_layout.addWidget(self.import_progress_label, 1)
+        self.import_progress_bar = QProgressBar()
+        self.import_progress_bar.setTextVisible(False)
+        self.import_progress_bar.setRange(0, 1)
+        self.import_progress_bar.setFixedWidth(200)
+        progress_layout.addWidget(self.import_progress_bar)
+        self.import_cancel_button = QPushButton("Annuler")
+        self.import_cancel_button.clicked.connect(self.import_cancel_requested.emit)
+        progress_layout.addWidget(self.import_cancel_button)
+        self.import_progress_frame.hide()
+        run_layout.addWidget(self.import_progress_frame)
+
+        self.import_results_list = QListWidget()
+        self.import_results_list.setMaximumHeight(96)
+        self.import_results_list.setToolTip(
+            "Double-clique sur un import terminé pour l'ouvrir dans la bibliothèque"
+        )
+        self.import_results_list.itemDoubleClicked.connect(
+            lambda _item: self.open_recordings_requested.emit()
+        )
+        run_layout.addWidget(self.import_results_list)
+
+        self.import_status_label = QLabel(IMPORT_HINT)
+        self.import_status_label.setObjectName("hint")
+        self.import_status_label.setWordWrap(True)
+        run_layout.addWidget(self.import_status_label)
+
+        outer.addWidget(run_box)
+        outer.addStretch(1)
+        return page
+
+    # ------------------------------------------------------------------
+    # Importer : logique
+    # ------------------------------------------------------------------
+    def import_options(self) -> dict:
+        """Options choisies dans l'onglet, pour le prochain import."""
+        return {
+            "model": self.import_model_combo.currentData() or "",
+            "diarize": self.import_diarize_check.isChecked(),
+            "speakers": int(self.import_speakers_spin.value()),
+            "clean": self.clean_imports_check.isChecked(),
+        }
+
+    def _choose_import_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Importer des fichiers audio", str(Path.home()), AUDIO_FILTER
+        )
+        if paths:
+            self.add_import_files(list(paths))
+
+    def add_import_files(self, paths: list) -> None:
+        """Ajoute des fichiers a la liste (bouton ou glisser-deposer)."""
+        known = set(self._import_paths())
+        for raw in paths:
+            path = str(Path(str(raw)).expanduser()) if raw else ""
+            if not path or path in known or not Path(path).is_file():
+                continue
+            known.add(path)
+            item = QListWidgetItem(f"{Path(path).name}  ·  {_file_size(path)}")
+            item.setData(Qt.UserRole, path)
+            item.setToolTip(path)
+            self.import_files_list.addItem(item)
+        self._sync_import_options()
+
+    def _remove_selected_import_files(self) -> None:
+        for item in self.import_files_list.selectedItems():
+            self.import_files_list.takeItem(self.import_files_list.row(item))
+        self._sync_import_options()
+
+    def _clear_import_files(self) -> None:
+        self.import_files_list.clear()
+        self._sync_import_options()
+
+    def _import_paths(self) -> list[str]:
+        return [
+            self.import_files_list.item(index).data(Qt.UserRole)
+            for index in range(self.import_files_list.count())
+        ]
+
+    def _start_import(self) -> None:
+        paths = self._import_paths()
+        if not paths:
+            return
+        self.import_requested.emit(paths, self.import_options())
+
+    def _sync_import_options(self) -> None:
+        """Accorde les widgets entre eux et met a jour les indications."""
+        has_files = self.import_files_list.count() > 0
+        self.import_start_button.setEnabled(has_files and not self._import_running)
+        diarize = self.import_diarize_check.isChecked()
+        self.import_speakers_spin.setEnabled(diarize)
+
+        model = self.import_model_combo.currentData() or DEFAULT_DIARIZATION_MODEL
+        if not diarize:
+            hint = "Diarisation coupée : tout le texte sera attribué à un seul locuteur."
+        elif not diarizes_by_default(model):
+            hint = (
+                "Ce modèle ne sépare pas les locuteurs : choisis-en un autre ou "
+                "décoche la diarisation."
+            )
+        else:
+            hint = ""
+        self.import_options_hint.setText(hint)
+        self._refresh_import_estimate()
+
+    def _refresh_import_estimate(self) -> None:
+        paths = self._import_paths()
+        if not paths:
+            self.import_estimate_label.setText("")
+            return
+        seconds = 0.0
+        unknown = 0
+        for path in paths:
+            try:
+                seconds += float(audiofiles.probe(Path(path)).duration)
+            except Exception:
+                unknown += 1
+        parts = [f"{len(paths)} fichier" + ("s" if len(paths) > 1 else "")]
+        if seconds:
+            parts.append(format_duration(seconds))
+            rate = self._import_model_rate()
+            if rate:
+                parts.append(f"≈ {format_money(seconds / 3600.0 * rate)}")
+        if unknown:
+            parts.append(f"{unknown} durée(s) inconnue(s)")
+        self.import_estimate_label.setText(" · ".join(parts))
+
+    def _import_model_rate(self) -> float | None:
+        model = self.import_model_combo.currentData() or DEFAULT_DIARIZATION_MODEL
+        for item in self._catalogue.stt:
+            if item.get("id") == model:
+                return item.get("per_hour")
+        return None
+
+    # ------------------------------------------------------------------
+    # Importer : progression (pilotee par l'application)
+    # ------------------------------------------------------------------
+    def set_import_running(self, running: bool, label: str = "") -> None:
+        self._import_running = bool(running)
+        self.import_progress_frame.setVisible(self._import_running)
+        if self._import_running:
+            self.import_progress_label.setText(label or "Import en cours…")
+            self.import_progress_bar.setRange(0, 1)
+            self.import_progress_bar.setValue(0)
+        self.import_start_button.setEnabled(
+            bool(self._import_paths()) and not self._import_running
+        )
+
+    def set_import_progress(self, done: int, total: int, message: str) -> None:
+        self.import_progress_bar.setRange(0, max(total, 1))
+        self.import_progress_bar.setValue(max(0, done))
+        if total:
+            self.import_progress_label.setText(f"{message} — fichier {done}/{total}")
+        else:
+            self.import_progress_label.setText(message or "Import en cours…")
+
+    def on_import_done(self, entry_id: str) -> None:
+        entry = library.get(entry_id)
+        if entry is None:
+            return
+        bits: list[str] = []
+        if entry.seconds:
+            bits.append(format_duration(entry.seconds))
+        if len(entry.speakers) > 1:
+            bits.append(f"{len(entry.speakers)} locuteurs")
+        if entry.cost:
+            bits.append(format_money(entry.cost))
+        text = f"✔ {entry.title}" + (" — " + " · ".join(bits) if bits else "")
+        item = QListWidgetItem(text)
+        item.setData(Qt.UserRole, entry_id)
+        item.setToolTip(f"{entry.source}\nDouble-clique pour l'ouvrir dans la bibliothèque")
+        self.import_results_list.addItem(item)
+        self.import_results_list.scrollToBottom()
+
+    def on_import_failed(self, path: str, message: str = "") -> None:
+        item = QListWidgetItem(f"✕ {Path(path).name} — échec")
+        item.setToolTip(message or "L'import a échoué.")
+        self.import_results_list.addItem(item)
+        self.import_results_list.scrollToBottom()
+
+    def on_import_finished(self, message: str = "") -> None:
+        if self.import_results_list.count():
+            self._clear_import_files()
+        self.set_import_running(False)
+        self.import_status_label.setText(message or IMPORT_HINT)
+
     def _build_processing(self) -> QWidget:
         """Réglages techniques des imports : tout est automatique par défaut."""
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(4, 12, 4, 4)
 
-        box = QGroupBox("Imports audio (réunions, appels, vocaux)")
+        box = QGroupBox("Imports audio : réglages techniques")
         form = QFormLayout(box)
-
-        self.diarization_combo = NoWheelComboBox()
-        self.diarization_combo.setMinimumWidth(280)
-        for value, label in (
-            ("", "Automatique (MAI Transcribe 2)"),
-            ("microsoft/mai-transcribe-2", "MAI Transcribe 2 — recommandé"),
-            ("deepgram/nova-3", "Deepgram Nova-3"),
-            ("google/gemini-3.5-transcribe", "Gemini 3.5 Transcribe (texte seul)"),
-            ("x-ai/grok-stt-1.0", "Grok STT (texte seul, sans locuteurs)"),
-        ):
-            self.diarization_combo.addItem(label, value)
-        self.diarization_combo.setToolTip(
-            "Modèle utilisé pour transcrire et séparer les locuteurs d'un "
-            "fichier importé. « Automatique » suit les recommandations de Vox."
-        )
-        form.addRow("Modèle d'import", self.diarization_combo)
 
         self.chunk_spin = NoWheelSpinBox()
         self.chunk_spin.setRange(0, 1500)
@@ -659,23 +1019,14 @@ class SettingsWindow(QDialog):
             "locuteurs en double (fusionnables à la main dans la bibliothèque)."
         )
         form.addRow("", self.merge_speakers_check)
-
-        self.clean_imports_check = QCheckBox(
-            "Nettoyer automatiquement après l'import (LLM)"
-        )
-        self.clean_imports_check.setToolTip(
-            "Une passe de correction (ponctuation, majuscules, noms propres, "
-            "« euh » et répétitions) est lancée après la transcription, avant "
-            "de ranger le transcript. Coût indicatif : 0,05 à 0,10 $ par heure "
-            "d'audio. Le transcript brut est conservé à côté du nettoyé."
-        )
-        form.addRow("", self.clean_imports_check)
         outer.addWidget(box)
 
         hint = QLabel(
-            "Ces réglages ne concernent que les fichiers importés (bouton "
-            "« Importer » de la bibliothèque, commande vox --import). La dictée "
-            "garde ses propres modèles, dans l'onglet Général."
+            "Ces réglages ne concernent que les fichiers importés (onglet "
+            "« Importer », bouton « Importer » de la bibliothèque, commande "
+            "vox --import). La dictée garde ses propres modèles, dans l'onglet "
+            "Général. Le modèle, la diarisation et le nettoyage se choisissent "
+            "dans l'onglet « Importer »."
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
@@ -1041,17 +1392,22 @@ class SettingsWindow(QDialog):
         self.custom_prompt_edit.setPlainText(settings.reword_custom_prompt)
         self._sync_reword_state()
 
-        if settings.diarization_model and self.diarization_combo.findData(
+        if settings.diarization_model and self.import_model_combo.findData(
             settings.diarization_model
         ) < 0:
-            self.diarization_combo.addItem(
+            self.import_model_combo.addItem(
                 settings.diarization_model, settings.diarization_model
             )
-        self._select_data(self.diarization_combo, settings.diarization_model)
+        self._select_data(self.import_model_combo, settings.diarization_model)
+        self.import_diarize_check.setChecked(settings.import_diarize)
+        self.import_speakers_spin.setValue(
+            max(0, min(8, int(settings.import_speakers or 0)))
+        )
+        self.clean_imports_check.setChecked(settings.clean_imports)
         self.chunk_spin.setValue(int(settings.import_chunk_seconds or 0))
         self.parallel_spin.setValue(max(1, int(settings.import_parallel or 3)))
         self.merge_speakers_check.setChecked(settings.import_merge_speakers)
-        self.clean_imports_check.setChecked(settings.clean_imports)
+        self._sync_import_options()
 
     def _selected_hotkey(self) -> str:
         """Combinaison retenue, en tenant compte du mode personnalise."""
@@ -1120,7 +1476,9 @@ class SettingsWindow(QDialog):
             reword_tone=self.tone_combo.currentData(),
             reword_custom_prompt=self.custom_custom_text(),
             typing_wpm=float(self.typing_spin.value()),
-            diarization_model=self.diarization_combo.currentData() or "",
+            diarization_model=self.import_model_combo.currentData() or "",
+            import_diarize=self.import_diarize_check.isChecked(),
+            import_speakers=int(self.import_speakers_spin.value()),
             import_chunk_seconds=int(self.chunk_spin.value()),
             import_parallel=int(self.parallel_spin.value()),
             import_merge_speakers=self.merge_speakers_check.isChecked(),

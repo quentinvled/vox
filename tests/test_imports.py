@@ -66,6 +66,12 @@ class FakeClient:
     def close(self) -> None:
         pass
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        return None
+
     def transcribe(self, data: bytes, model: str, **kwargs):
         index = len(self.calls)
         self.calls.append({"model": model, "bytes": len(data), **kwargs})
@@ -227,3 +233,35 @@ def test_process_file_warns_when_model_does_not_diarize(tmp_path: Path, monkeypa
         "ne distingue pas les locuteurs" in warning
         for warning in result.transcript.warnings
     )
+
+
+@needs_ffmpeg
+def test_process_file_can_disable_diarization(tmp_path: Path, monkeypatch) -> None:
+    """L'onglet « Importer » peut demander un texte brut, sans locuteurs."""
+    monkeypatch.setattr(imports, "Client", FakeClient)
+    source = _long_call(tmp_path / "appel.wav")
+    settings = Settings(import_chunk_seconds=600, import_parallel=1)
+    result = imports.process_file(source, settings, diarize=False)
+
+    # Aucune option de diarisation n'est envoyee au fournisseur...
+    assert all(not call.get("provider_options") for call in FakeClient.calls)
+    # ...et le transcript ne distingue qu'un seul locuteur.
+    assert len(result.transcript.speakers) == 1
+
+
+@needs_ffmpeg
+def test_process_file_expected_speakers_is_honoured(tmp_path: Path, monkeypatch) -> None:
+    """Le nombre de personnes annonce sert d'indice au raccord des locuteurs."""
+    monkeypatch.setattr(imports, "Client", FakeClient)
+    source = _long_call(tmp_path / "appel.wav")
+    seen: list[dict] = []
+
+    def _fake_merge(transcript, _client, _model, **kwargs):
+        seen.append(kwargs)
+        return {}
+
+    monkeypatch.setattr(imports, "merge_speakers_with_llm", _fake_merge)
+    settings = Settings(import_chunk_seconds=600, import_parallel=1)
+    imports.process_file(source, settings, expected_speakers=2)
+
+    assert seen and seen[0].get("expected") == 2

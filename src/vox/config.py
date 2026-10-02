@@ -138,8 +138,13 @@ class Settings:
     # Raccord final des locuteurs entre tranches (passe LLM, quelques centimes).
     import_merge_speakers: bool = True
     # Nettoyage editorial automatique apres l'import (ponctuation, noms propres,
-    # « euh ») : active par defaut, decochable dans Reglages → Traitement.
+    # « euh ») : active par defaut, decochable dans Reglages → Importer.
     clean_imports: bool = True
+    # Diarisation des imports : separer les locuteurs (« qui parle »).
+    import_diarize: bool = True
+    # Nombre de personnes attendues dans un import (0 = automatique) : indice
+    # donne a la passe LLM qui raccorde les locuteurs entre tranches.
+    import_speakers: int = 0
 
     # --- Mises a jour ---
     check_updates: bool = True

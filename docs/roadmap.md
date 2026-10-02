@@ -24,6 +24,7 @@ Conventions :
 | 1.9 | UI : bouton Importer, progression, transcript cliquable, renommage, export | [x] |
 | 1.10 | Nettoyage éditorial d'un transcript (`vox --clean-transcript`, contexte + glossaire) | [x] |
 | 1.11 | Prénoms des locuteurs : déduction LLM (`--name-speakers`) et renommage explicite (`--rename-speakers`) | [x] |
+| 1.12 | Import assisté dans Réglages → onglet **Importer** : glisser-déposer, modèle, diarisation, nombre de personnes, nettoyage, estimation du coût, progression en arrière-plan, annulation | [x] |
 
 **Test n°1 (en cours, VPS)** — premier essai réel le 30/09 sur un appel de
 33 min à 3 personnes (`Call KH Route.m4a`, 97 min au total dont seules les
@@ -108,6 +109,17 @@ l'agent.
 
 ## Journal
 
+- **02/10/2026 (import assisté)** — l'import a désormais son **onglet
+  « Importer »** dans les réglages : on y glisse-dépose (ou on ajoute) des
+  fichiers, on voit pour chacun sa taille et l'estimation (durée + coût), on
+  choisit **avant de lancer** le modèle, la **diarisation** (case à cocher), le
+  **nombre de personnes attendues** et le nettoyage LLM d'après. L'import part
+  en arrière-plan : barre de progression, annulation, la fenêtre peut être
+  réduite ou fermée, chaque fichier apparaît dans les résultats et rejoint la
+  bibliothèque. `imports.process_file` accepte maintenant `diarize` (forcer ou
+  couper la séparation des locuteurs) et `expected_speakers` (indice pour le
+  raccord). `clean_imports` et le modèle d'import quittent l'onglet Traitement
+  pour l'onglet Importer. 108 tests passent.
 - **01/10/2026 (assistant, étape 1)** — l'import n'était pas trouvable : il
   reste **un bouton dans la pilule** (« ☰ » à côté de l'engrenage) et une
   entrée **« Importer un fichier audio… »** en haut du menu de l'icône ;

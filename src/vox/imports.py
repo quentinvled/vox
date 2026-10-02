@@ -96,11 +96,15 @@ def process_file(
     limit_seconds: float | None = None,
     codec: str = "",
     expected_speakers: int | None = None,
+    diarize: bool | None = None,
 ) -> ImportResult:
     """Transcrit et diarise un fichier, en s'adaptant a ce qu'il contient.
 
     `limit_seconds` ne traite que le debut du fichier : pratique pour un essai
     sur quelques minutes avant de payer l'heure entiere.
+
+    `diarize` force (ou coupe) la separation des locuteurs, quel que soit ce que
+    le routeur deduit du fichier. `None` = comportement automatique.
     """
     started = time.perf_counter()
     source = Path(path)
@@ -159,6 +163,7 @@ def process_file(
         nonlocal done
         check_cancel()
         track = strategy.tracks[track_index]
+        want_diarize = track.diarize if diarize is None else diarize
         result = ChunkResult(
             index=chunk.index,
             track=track_index,
@@ -167,7 +172,7 @@ def process_file(
             core_end=chunk.core_end,
             window_end=chunk.end,
             track_label=track.label,
-            fixed_speaker=not track.diarize,
+            fixed_speaker=not want_diarize,
         )
         result.language = settings.language or ""
         formats = _candidate_formats(codec)
@@ -191,7 +196,7 @@ def process_file(
                     audio_format,
                     resolved_model,
                     settings,
-                    diarize=track.diarize,
+                    diarize=want_diarize,
                     cancel=cancel,
                 )
                 break

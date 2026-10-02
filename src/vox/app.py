@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import logging
 import sys
 import threading
@@ -143,6 +144,8 @@ class _ImportWorker(QThread):
                     self._settings,
                     progress=self._on_progress,
                     cancel=self.cancel,
+                    expected_speakers=self._settings.import_speakers or None,
+                    diarize=self._settings.import_diarize,
                 )
             except ImportCancelled:
                 self.cancelled.emit()
@@ -662,6 +665,8 @@ class VoxApp(QObject):
 
         window.open_recordings_requested.connect(_on_open_recordings)
         window.dashboard_requested.connect(self.open_stats)
+        window.import_requested.connect(self._on_settings_import_requested)
+        window.import_cancel_requested.connect(self.cancel_import)
         window.check_requested.connect(
             lambda url: self.check_updates(url, manual=True)
         )
@@ -679,6 +684,12 @@ class VoxApp(QObject):
 
         window.finished.connect(_on_finished)
         self._settings_window = window
+        # Un import tourne peut-etre deja : l'onglet « Importer » reprend
+        # l'etat en cours (les fichiers deja ranges s'affichent).
+        if self._import_worker is not None and self._import_worker.isRunning():
+            window.set_import_running(True, "Import en cours…")
+            for entry_id in self._imported_ids:
+                window.on_import_done(entry_id)
         window.show()
         window.raise_()
         window.activateWindow()
@@ -889,8 +900,18 @@ class VoxApp(QObject):
     # ------------------------------------------------------------------
     # Import de fichiers audio
     # ------------------------------------------------------------------
-    def start_import(self, paths: list[str], replace_id: str = "") -> None:
-        """Lance l'import de fichiers audio (ou la retranscription d'une entree)."""
+    def start_import(
+        self,
+        paths: list[str],
+        replace_id: str = "",
+        settings_override: Settings | None = None,
+    ) -> None:
+        """Lance l'import de fichiers audio (ou la retranscription d'une entree).
+
+        `settings_override` laisse l'onglet « Importer » des reglages appliquer
+        ses options (modele, diarisation, personnes, nettoyage) au lot, sans
+        toucher aux reglages enregistres.
+        """
         paths = [str(path) for path in (paths or []) if path]
         if not paths and not replace_id:
             return
@@ -908,7 +929,12 @@ class VoxApp(QObject):
         self._imported_ids = []
         self._import_errors = []
         self._import_cancelled = False
-        worker = _ImportWorker(paths, self.settings, replace_id=replace_id, parent=self)
+        worker = _ImportWorker(
+            paths,
+            settings_override or self.settings,
+            replace_id=replace_id,
+            parent=self,
+        )
         worker.progress.connect(self._on_import_progress)
         worker.imported.connect(self._on_imported)
         worker.replaced.connect(self._on_import_replaced)
@@ -920,10 +946,23 @@ class VoxApp(QObject):
         label = "Retranscription…" if replace_id else f"Import : {Path(paths[0]).name}"
         if self._recordings_window is not None:
             self._recordings_window.set_import_running(True, label)
+        if self._settings_window is not None:
+            self._settings_window.set_import_running(True, label)
         self.overlay.show_pill()
         self.overlay.set_state("transcribing", detail=label)
         self.tray.set_status("Import…")
         worker.start()
+
+    def _on_settings_import_requested(self, paths: list, options: dict) -> None:
+        """Import lance depuis les reglages : options appliquees a ce lot."""
+        settings = dataclasses.replace(
+            self.settings,
+            diarization_model=str(options.get("model") or ""),
+            import_diarize=bool(options.get("diarize", True)),
+            import_speakers=int(options.get("speakers") or 0),
+            clean_imports=bool(options.get("clean", True)),
+        )
+        self.start_import(list(paths), settings_override=settings)
 
     def cancel_import(self) -> None:
         if self._import_worker is not None and self._import_worker.isRunning():
@@ -945,6 +984,8 @@ class VoxApp(QObject):
     def _on_import_progress(self, done: int, total: int, message: str) -> None:
         if self._recordings_window is not None:
             self._recordings_window.set_import_progress(done, total, message)
+        if self._settings_window is not None:
+            self._settings_window.set_import_progress(done, total, message)
         if message:
             self.overlay.set_state("transcribing", detail=message)
 
@@ -952,6 +993,8 @@ class VoxApp(QObject):
         self._imported_ids.append(entry_id)
         if self._recordings_window is not None:
             self._recordings_window.on_imported(entry_id)
+        if self._settings_window is not None:
+            self._settings_window.on_import_done(entry_id)
 
     def _on_import_replaced(self, entry_id: str) -> None:
         if self._recordings_window is not None:
@@ -962,6 +1005,8 @@ class VoxApp(QObject):
         self._import_errors.append(message)
         if self._recordings_window is not None:
             self._recordings_window.on_import_failed(path)
+        if self._settings_window is not None:
+            self._settings_window.on_import_failed(path, message)
         self.tray.showMessage(
             "Vox — import impossible",
             f"{Path(path).name} : {message}",
@@ -977,25 +1022,30 @@ class VoxApp(QObject):
         if self._recordings_window is not None:
             self._recordings_window.set_import_running(False)
         self.tray.set_status("Prêt")
+        summary = ""
         if self._import_cancelled:
+            summary = "Import annulé."
             self._on_notice("info", "Import annulé.")
         elif self._import_errors and not self._imported_ids:
-            self._on_notice("error", f"Import impossible : {self._import_errors[0]}")
+            summary = f"Import impossible : {self._import_errors[0]}"
+            self._on_notice("error", summary)
         elif self._import_errors:
-            self._on_notice(
-                "info",
-                f"Import terminé, {len(self._import_errors)} fichier(s) en échec.",
+            summary = (
+                f"Import terminé, {len(self._import_errors)} fichier(s) en échec."
             )
+            self._on_notice("info", summary)
         elif self._imported_ids:
             count = len(self._imported_ids)
-            message = f"Import terminé : {count} fichier(s) transcrit(s)."
-            self._on_notice("info", message)
+            summary = f"Import terminé : {count} fichier(s) transcrit(s)."
+            self._on_notice("info", summary)
             self.tray.showMessage(
                 "Vox — import terminé",
                 "Ouvre la bibliothèque pour relire et nommer les locuteurs.",
                 QSystemTrayIcon.Information,
                 6000,
             )
+        if self._settings_window is not None:
+            self._settings_window.on_import_finished(summary)
 
     def _delete_import(self, entry_id: str) -> None:
         library.delete(entry_id)

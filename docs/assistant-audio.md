@@ -120,6 +120,12 @@ transcript est cliquable, les locuteurs se renomment et se fusionnent,
 pas copié : la bibliothèque stocke l'index et le transcript JSON. Mémorisation
 des prénoms par contact : pas encore.
 
+**Import assisté (02/10/2026)** : l'import a son propre onglet dans les
+réglages — fichiers par glisser-déposer, modèle, diarisation, nombre de
+personnes attendues, nettoyage LLM, estimation durée + coût, progression en
+arrière-plan et annulation. La bibliothèque reste l'endroit où l'on relit, et
+le bouton « Importer » y reste disponible.
+
 **Nettoyage (01/10/2026)** : après chaque import, un nettoyage éditorial
 automatique corrige ponctuation, majuscules, noms propres et « euh », avec le
 vocabulaire des réglages comme glossaire. Décochable dans Réglages →
