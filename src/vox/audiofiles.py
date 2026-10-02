@@ -19,6 +19,8 @@ from pathlib import Path
 
 import numpy as np
 
+from . import proc
+
 # Duree des extraits compares pour savoir si les deux canaux sont identiques.
 CORRELATION_WINDOW = 20.0
 # Au-dela, les canaux sont consideres comme le meme signal (son mono duplique).
@@ -123,6 +125,8 @@ def _run(args: list[str], *, timeout: float, binary: bool = False):
             errors=None if binary else "replace",
             timeout=timeout,
             check=False,
+            # Sans cela, chaque ffmpeg ouvre une console qui clignote.
+            **proc.no_window(),
         )
     except FileNotFoundError as exc:
         raise AudioError(f"ffmpeg introuvable : {exc}") from exc

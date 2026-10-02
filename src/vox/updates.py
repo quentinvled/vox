@@ -40,6 +40,8 @@ from pathlib import Path
 
 import httpx
 
+from . import proc
+
 DEFAULT_TIMEOUT = 15.0
 
 
@@ -203,7 +205,11 @@ def install(downloaded: Path) -> tuple[bool, str]:
     if sys.platform == "win32":
         # L'installeur ferme Vox, remplace les fichiers puis relance.
         try:
-            subprocess.Popen([str(downloaded), "--silent"], close_fds=True)  # noqa: S603
+            subprocess.Popen(  # noqa: S603
+                [str(downloaded), "--silent"],
+                close_fds=True,
+                **proc.no_window(),
+            )
         except OSError as exc:
             return False, f"lancement de l'installeur impossible ({exc})"
         return True, ""

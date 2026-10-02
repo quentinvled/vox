@@ -26,6 +26,7 @@ try:
 except ImportError:  # pragma: no cover - hors Windows
     winreg = None  # type: ignore[assignment]
 
+from . import proc
 from .paths import data_dir
 
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Vox"
@@ -248,6 +249,8 @@ def create_shortcuts(exe: Path | None = None, icon: Path | None = None) -> list[
             text=True,
             timeout=60,
             check=False,
+            # Sinon une fenetre PowerShell clignote a chaque installation.
+            **proc.no_window(),
         )
     finally:
         script_path.unlink(missing_ok=True)

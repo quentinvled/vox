@@ -27,7 +27,7 @@ payload_files = sorted(path for path in PAYLOAD.iterdir() if path.is_file())
 if not payload_files:
     raise SystemExit(f"Payload vide : {PAYLOAD}. Lance d'abord tools/build_installer.py")
 
-hiddenimports = ["vox", "vox.install", "vox.paths", "tkinter", "tkinter.ttk"]
+hiddenimports = ["vox", "vox.install", "vox.paths", "vox.proc", "tkinter", "tkinter.ttk"]
 
 excludes = [
     # Aucun besoin de Qt dans l'installeur : c'est la moitie du poids.

@@ -117,6 +117,12 @@ l'agent.
 
 ## Journal
 
+- **02/10/2026 (confort Windows)** — **plus de fenêtres de console qui
+  clignotent** : tous les programmes externes lancés par Vox passent par
+  `proc.no_window()` (`CREATE_NO_WINDOW`) — `ffmpeg` (à chaque étape d'un
+  import, d'où l'effet « plein de fenêtres ») et `powershell` (création des
+  raccourcis à l'installation et à chaque mise à jour). Les tests vérifient que
+  le drapeau est bien passé sous Windows, et absent ailleurs.
 - **02/10/2026 (appels)** — l'assistant enregistre les appels **en un clic** :
   « Enregistrer un appel (micro + son système)… » dans le menu de l'icône, ou
   la même entrée qui devient « Arrêter l'enregistrement (mm:ss) ». Deux pistes
