@@ -382,18 +382,34 @@ def test_app_call_recording_flow(qapp, monkeypatch, tmp_path: Path) -> None:
     from vox import app as app_module
 
     class _FakeMicro:
-        def __init__(self, **_kwargs) -> None:
+        def __init__(self, **kwargs) -> None:
+            self.sink_path = Path(kwargs["sink"]) if kwargs.get("sink") else None
             self.recording = False
             self.level = 0.4
             self.has_speech = True
             self.hit_max = False
+            self.sink_error = False
+            self._sink = None
 
         def start(self) -> None:
             self.recording = True
+            if self.sink_path is not None:
+                self.sink_path.parent.mkdir(parents=True, exist_ok=True)
+                self._sink = self.sink_path.open("wb")
+                # 2 secondes de signal à 16 kHz (au-dessus du seuil de silence).
+                sample = (12000).to_bytes(2, "little", signed=True)
+                self._sink.write(sample * 32000)
 
         def stop(self) -> bytes:
             self.recording = False
-            return b"RIFF" + b"\x00" * 64
+            if self._sink is not None:
+                self._sink.close()
+                self._sink = None
+            return b""
+
+        def flush(self) -> None:
+            if self._sink is not None:
+                self._sink.flush()
 
         def cancel(self) -> None:
             self.recording = False
@@ -404,8 +420,10 @@ def test_app_call_recording_flow(qapp, monkeypatch, tmp_path: Path) -> None:
         def elapsed(self) -> float:
             return 0.0
 
-    monkeypatch.setattr("vox.app.Recorder", lambda **_kwargs: _FakeMicro())
-    monkeypatch.setattr("vox.app.SystemRecorder", lambda _info: _FakeMicro())
+    monkeypatch.setattr("vox.app.Recorder", lambda **kwargs: _FakeMicro(**kwargs))
+    monkeypatch.setattr(
+        "vox.app.SystemRecorder", lambda _info, **kwargs: _FakeMicro(**kwargs)
+    )
     monkeypatch.setattr(
         "vox.app.sources.wasapi_loopback",
         lambda: {"index": 1, "name": "Sortie", "rate": 48000, "channels": 2},
@@ -417,8 +435,8 @@ def test_app_call_recording_flow(qapp, monkeypatch, tmp_path: Path) -> None:
         monkeypatch.setattr(
             vox,
             "start_call_transcription",
-            lambda mic_path, system_path, offset, title: started.append(
-                (Path(mic_path), system_path, offset, title)
+            lambda mic_path, system_path, offset, title, at="": started.append(
+                (Path(mic_path), system_path, offset, title, at)
             ),
         )
 
@@ -436,7 +454,7 @@ def test_app_call_recording_flow(qapp, monkeypatch, tmp_path: Path) -> None:
         assert not vox.call_recording
         assert vox.overlay.stop_button.isHidden()
         assert started, "la transcription doit être lancée"
-        mic_path, system_path, _offset, title = started[0]
+        mic_path, system_path, _offset, title, _at = started[0]
         assert title.startswith("Appel — ")
         assert system_path is not None
         assert mic_path.exists() and system_path.exists()
@@ -486,3 +504,57 @@ def test_call_transcriber_creates_call_entry(monkeypatch, tmp_path: Path) -> Non
     stored = library.load_transcript(entry.id)
     assert stored is not None
     assert stored.speaker_labels() == ["Moi", "Interlocuteur 1"]
+
+
+def _pcm_tone(seconds: float) -> bytes:
+    import numpy as np
+
+    count = int(16000 * seconds)
+    time_axis = np.arange(count, dtype=np.float32) / 16000.0
+    return (np.sin(2 * np.pi * 440 * time_axis) * 8000).astype("<i2").tobytes()
+
+
+def test_app_recovers_interrupted_calls(qapp, monkeypatch, tmp_path: Path) -> None:
+    """Un appel interrompu est finalisé puis transcrit au démarrage suivant."""
+    from vox import app as app_module
+    from vox import calls as calls_module
+    from vox.paths import calls_dir
+
+    folder = calls_dir()
+    stamp = "2026-10-01_10-00-00"
+    (folder / f"{stamp}_micro.pcm").write_bytes(_pcm_tone(2.0))
+    calls_module.write_sidecar(
+        folder / f"{stamp}.json",
+        {
+            "stamp": stamp,
+            "titre": "Appel — 01/10 10:00",
+            "started": "2026-10-01T10:00:00",
+            "decalage": 0.1,
+            "micro_part": f"{stamp}_micro.pcm",
+            "systeme_part": "",
+        },
+    )
+
+    vox = app_module.VoxApp(qapp)
+    try:
+        started: list[tuple] = []
+        monkeypatch.setattr(
+            vox,
+            "start_call_transcription",
+            lambda mic, system, offset, title, at="": started.append(
+                (mic, system, offset, title, at)
+            ),
+        )
+        vox._recover_calls()
+
+        assert len(started) == 1
+        mic, system, offset, title, at = started[0]
+        assert title == "Appel — 01/10 10:00 (récupéré)"
+        assert Path(mic).exists() and Path(mic).suffix == ".wav"
+        assert system is None
+        assert offset == pytest.approx(0.1)
+        assert at == "2026-10-01T10:00:00"
+        # La transcription est en cours : la fiche de suivi reste jusqu'à la fin.
+        assert vox._call_meta is not None
+    finally:
+        vox.quit()

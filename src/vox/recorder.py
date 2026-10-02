@@ -6,6 +6,7 @@ import contextlib
 import io
 import time
 import wave
+from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
@@ -21,17 +22,26 @@ SILENCE_PEAK = 0.020
 
 
 class Recorder:
-    """Enregistreur non bloquant. Le niveau RMS est expose pour l'UI."""
+    """Enregistreur non bloquant. Le niveau RMS est expose pour l'UI.
+
+    `sink` ecrit les echantillons dans un fichier brut (`.pcm`, 16 kHz mono
+    int16) au fil de l'eau : rien n'est garde en memoire, et un arret brutal de
+    l'application ne perd pas l'enregistrement (il sera finalise au demarrage
+    suivant). Sans `sink`, le comportement historique reste : tout en memoire,
+    WAV renvoye par `stop()` (dictees courtes).
+    """
 
     def __init__(
         self,
         samplerate: int = 16000,
         device: int | None = None,
         max_seconds: int = 300,
+        sink: Path | str | None = None,
     ) -> None:
         self.samplerate = samplerate
         self.device = device
         self.max_seconds = max_seconds
+        self.sink_path = Path(sink) if sink else None
 
         # Le peripherique reste ouvert entre les dictees (« micro chaud ») :
         # c'est l'ouverture de PortAudio qui coute cher, pas le demarrage de la
@@ -39,6 +49,9 @@ class Recorder:
         self._stream: sd.InputStream | None = None
         self._active = False
         self._frames: list[np.ndarray] = []
+        self._sink = None
+        self._samples_written = 0
+        self.sink_error = False
         self._started_at = 0.0
         self._level = 0.0
         self._peak = 0.0
@@ -88,7 +101,20 @@ class Recorder:
         if not self._active:
             return
         chunk = indata.copy()
-        self._frames.append(chunk)
+        if self._sink is not None:
+            # Ecriture au fil de l'eau : rien en memoire, survit a un arret brutal.
+            try:
+                self._sink.write(chunk.tobytes())
+                self._samples_written += int(chunk.size)
+            except OSError:
+                # Disque plein, fichier retire : on le signale, l'application
+                # arrete proprement l'enregistrement (rien d'autre n'est perdu).
+                self.sink_error = True
+                with contextlib.suppress(Exception):
+                    self._sink.close()
+                self._sink = None
+        else:
+            self._frames.append(chunk)
 
         samples = chunk.astype(np.float32) / 32768.0
         if samples.size:
@@ -156,11 +182,20 @@ class Recorder:
         self._peak = 0.0
         self._max_peak = 0.0
         self._hit_max = False
+        if self.sink_path is not None:
+            try:
+                self.sink_path.parent.mkdir(parents=True, exist_ok=True)
+                self._sink = self.sink_path.open("wb", buffering=256 * 1024)
+            except OSError as exc:
+                self._sink = None
+                raise RecorderError(f"Impossible d'écrire l'enregistrement ({exc}).") from exc
+            self._samples_written = 0
         try:
             stream = self._open_stream()
             stream.start()
         except Exception as exc:
             self._close_stream()
+            self._close_sink()
             raise RecorderError(
                 f"Impossible d'ouvrir le micro ({exc}). Vérifie le périphérique "
                 "d'entrée dans les réglages."
@@ -174,11 +209,18 @@ class Recorder:
                 self._stream.stop()
 
     def stop(self) -> bytes:
-        """Arrete la capture et renvoie le WAV (bytes)."""
+        """Arrete la capture et renvoie le WAV (bytes).
+
+        Avec un `sink`, rien n'est renvoye : les donnees sont deja sur le
+        disque (fichier brut), l'appelant les finalise.
+        """
         self._active = False
         self._stop_stream()
         frames, self._frames = self._frames, []
         self._level = 0.0
+        self._close_sink()
+        if self.sink_path is not None:
+            return b""
         if not frames:
             return b""
         return _encode_wav(np.concatenate(frames, axis=0), self.samplerate)
@@ -188,6 +230,26 @@ class Recorder:
         self._stop_stream()
         self._frames = []
         self._level = 0.0
+        self._close_sink()
+
+    def flush(self) -> None:
+        """Force l'ecriture sur disque (appele regulierement pendant un appel)."""
+        if self._sink is not None:
+            with contextlib.suppress(Exception):
+                self._sink.flush()
+
+    def _close_sink(self) -> None:
+        sink, self._sink = self._sink, None
+        if sink is not None:
+            with contextlib.suppress(Exception):
+                sink.close()
+
+    @property
+    def written_seconds(self) -> float:
+        """Duree reellement ecrite dans le fichier de sortie."""
+        if self.samplerate <= 0:
+            return 0.0
+        return self._samples_written / float(self.samplerate)
 
 
 def _encode_wav(samples: np.ndarray, samplerate: int) -> bytes:
@@ -212,12 +274,66 @@ def _resample(samples: np.ndarray, source_rate: int, target_rate: int) -> np.nda
     return np.interp(targets, positions, samples.astype(np.float32)).astype(np.int16)
 
 
+class StreamResampler:
+    """Reechantillonnage en flux, bloc par bloc, sans memoire.
+
+    Chaque bloc est converti vers `target_rate` en conservant entre les blocs le
+    dernier echantillon et la position fractionnaire : le signal reste continu
+    (aucun trou, aucun saut) et rien n'est accumule en memoire. C'est ce qui
+    permet d'ecrire l'enregistrement au fil de l'eau.
+    """
+
+    def __init__(self, source_rate: int, target_rate: int) -> None:
+        self.target_rate = target_rate
+        self._step = float(source_rate) / float(target_rate) if target_rate else 1.0
+        self._tail: float | None = None
+        self._position = 0.0
+
+    @property
+    def identity(self) -> bool:
+        return self._step == 1.0
+
+    def process(self, samples: np.ndarray) -> np.ndarray:
+        if samples.size == 0:
+            return np.empty(0, dtype=np.int16)
+        if self.identity:
+            return samples.astype(np.int16, copy=False)
+
+        block = samples.astype(np.float32, copy=False)
+        if self._tail is None:
+            self._tail = float(block[0])
+            self._position = 0.0
+        buffer = np.concatenate((np.array([self._tail], dtype=np.float32), block))
+        last = buffer.size - 1
+
+        if self._position >= last:
+            self._position -= last
+            self._tail = float(block[-1])
+            return np.empty(0, dtype=np.int16)
+
+        positions = np.arange(self._position, float(last), self._step, dtype=np.float64)
+        if positions.size == 0:
+            self._position -= last
+            self._tail = float(block[-1])
+            return np.empty(0, dtype=np.int16)
+        lower = np.floor(positions).astype(np.int64)
+        fraction = positions - lower
+        values = buffer[lower] * (1.0 - fraction) + buffer[lower + 1] * fraction
+
+        self._position = float(positions[-1]) + self._step - last
+        self._tail = float(block[-1])
+        return np.clip(values, -32768.0, 32767.0).astype(np.int16)
+
+
 class SystemRecorder:
-    """Capture le son du systeme (WASAPI loopback) en WAV 16 kHz mono.
+    """Capture le son du systeme (WASAPI loopback) en mono 16 kHz.
 
     Windows uniquement (PyAudioWPatch). Le flux est ouvert au demarrage ; le
     niveau RMS est expose pour l'UI, comme pour le micro. L'enregistrement sert
     aux appels : cette piste contient les interlocuteurs.
+
+    Comme pour le micro, `sink` ecrit le PCM (16 kHz mono int16) au fil de
+    l'eau : rien en memoire, et rien de perdu si l'application s'arrete mal.
     """
 
     def __init__(
@@ -225,14 +341,22 @@ class SystemRecorder:
         info: dict | None = None,
         target_rate: int = 16000,
         max_seconds: int = 4 * 3600,
+        sink: Path | str | None = None,
     ) -> None:
         self.info = dict(info or {})
         self.target_rate = target_rate
         self.max_seconds = max_seconds
+        self.sink_path = Path(sink) if sink else None
         self._pa = None
         self._stream = None
         self._active = False
         self._frames: list[np.ndarray] = []
+        self._sink = None
+        self._samples_written = 0
+        self.sink_error = False
+        self._resampler = StreamResampler(
+            int(self.info.get("rate") or 48000), self.target_rate
+        )
         self._started_at = 0.0
         self._level = 0.0
         self._max_peak = 0.0
@@ -271,10 +395,20 @@ class SystemRecorder:
             channels = max(1, int(self.info.get("channels") or 1))
             if channels > 1 and samples.size >= channels:
                 samples = samples.reshape(-1, channels).mean(axis=1)
-            chunk = samples.astype(np.int16)
-            self._frames.append(chunk)
-            floats = chunk.astype(np.float32) / 32768.0
-            if floats.size:
+            chunk = self._resampler.process(samples.astype(np.int16))
+            if chunk.size:
+                if self._sink is not None:
+                    try:
+                        self._sink.write(chunk.tobytes())
+                        self._samples_written += int(chunk.size)
+                    except OSError:
+                        self.sink_error = True
+                        with contextlib.suppress(Exception):
+                            self._sink.close()
+                        self._sink = None
+                else:
+                    self._frames.append(chunk)
+                floats = chunk.astype(np.float32) / 32768.0
                 rms = float(np.sqrt(np.mean(np.square(floats))))
                 peak = float(np.max(np.abs(floats)))
                 self._level = max(rms, self._level * 0.75)
@@ -300,6 +434,17 @@ class SystemRecorder:
         self._level = 0.0
         self._max_peak = 0.0
         self._hit_max = False
+        self._resampler = StreamResampler(
+            int(self.info.get("rate") or 48000), self.target_rate
+        )
+        if self.sink_path is not None:
+            try:
+                self.sink_path.parent.mkdir(parents=True, exist_ok=True)
+                self._sink = self.sink_path.open("wb", buffering=256 * 1024)
+            except OSError as exc:
+                self._sink = None
+                raise RecorderError(f"Impossible d'écrire l'enregistrement ({exc}).") from exc
+            self._samples_written = 0
         try:
             self._pa = self._pa or pyaudio.PyAudio()
             self._stream = self._pa.open(
@@ -314,6 +459,7 @@ class SystemRecorder:
             self._stream.start_stream()
         except Exception as exc:
             self._close_stream()
+            self._close_sink()
             raise RecorderError(
                 f"Impossible de capturer le son du système ({exc})."
             ) from exc
@@ -328,24 +474,41 @@ class SystemRecorder:
                     getattr(stream, method)()
 
     def stop(self) -> bytes:
-        """Arrete la capture et renvoie le WAV (bytes), reechantillonne a 16 kHz."""
+        """Arrete la capture et renvoie le WAV (bytes), ou rien avec un `sink`."""
         self._active = False
         self._close_stream()
         frames, self._frames = self._frames, []
         self._level = 0.0
+        self._close_sink()
+        if self.sink_path is not None:
+            return b""
         if not frames:
             return b""
-        samples = np.concatenate(frames, axis=0)
-        samples = _resample(
-            samples, int(self.info.get("rate") or 48000), self.target_rate
-        )
-        return _encode_wav(samples, self.target_rate)
+        return _encode_wav(np.concatenate(frames, axis=0), self.target_rate)
 
     def cancel(self) -> None:
         self._active = False
         self._close_stream()
         self._frames = []
         self._level = 0.0
+        self._close_sink()
+
+    def flush(self) -> None:
+        if self._sink is not None:
+            with contextlib.suppress(Exception):
+                self._sink.flush()
+
+    def _close_sink(self) -> None:
+        sink, self._sink = self._sink, None
+        if sink is not None:
+            with contextlib.suppress(Exception):
+                sink.close()
+
+    @property
+    def written_seconds(self) -> float:
+        if self.target_rate <= 0:
+            return 0.0
+        return self._samples_written / float(self.target_rate)
 
     def close(self) -> None:
         self.cancel()

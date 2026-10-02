@@ -89,10 +89,22 @@ continu (toutes les 5 s, instance PyAudio réutilisée) et les lignes du menu
 sont colorées et cliquables. Un clic sur « Enregistrer un appel (micro + son
 système)… » démarre les deux pistes ; la pilule montre chrono, niveaux et un
 bouton d'arrêt (masquable, l'icône passe au rouge). À l'arrêt : fichiers séparés
-dans `appels/`, transcription automatique de chaque piste (micro sans
-diarisation, système diarisé), recollage temporel (`calls.merge_tracks`) et
-rangement dans la bibliothèque. Restent : mixage à l'écoute, modes
-micro/système/les deux explicites, pause, et les pièges Bluetooth.
+dans `appels/`, transcription automatique de chaque piste, recollage temporel
+(`calls.merge_tracks`) et rangement dans la bibliothèque.
+
+**Robustesse (02/10/2026)** : les pistes sont écrites au fil de l'eau dans des
+`.pcm` (16 kHz mono, `flush` toutes les 200 ms) avec une fiche de suivi JSON ;
+un arrêt brutal est repris au démarrage suivant (`recover_calls()` : WAV
+finalisés puis transcription automatique). Un disque plein arrête proprement
+l'enregistrement ; la transcription en échec laisse l'audio dans la
+bibliothèque.
+
+**Diarisation adaptative (02/10/2026)** : si le système est muet, c'est le micro
+qui contient tout le monde (téléphone sur haut-parleur) : il est diarisé comme
+un import, avec des étiquettes honnêtes et un avertissement invitant à
+renommer ; une seule voix dans le micro est nommée « Moi ». Restent : mixage à
+l'écoute, modes micro/système/les deux explicites, pause, et les pièges
+Bluetooth (HFP).
 
 ## 5. Détection des appels
 

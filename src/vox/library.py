@@ -48,6 +48,8 @@ def _apply_extras(entry: ImportEntry, transcript: Transcript) -> None:
     """Recopie les informations utiles du transcript dans l'entrée d'index."""
     entry.extras["tranches"] = transcript.extras.get("tranches", 0)
     entry.extras["strategie"] = transcript.extras.get("strategie", "")
+    if transcript.extras.get("pistes"):
+        entry.extras["pistes"] = transcript.extras["pistes"]
     if transcript.extras.get("nettoyage"):
         entry.extras["nettoyage"] = transcript.extras["nettoyage"]
     if transcript.warnings:
@@ -255,6 +257,7 @@ def add(
     elapsed: float = 0.0,
     at: str = "",
     kind: str = KIND_IMPORT,
+    extras: dict | None = None,
 ) -> ImportEntry:
     """Range un import dans la bibliotheque et renvoie son entree."""
     moment = datetime.now()
@@ -283,6 +286,8 @@ def add(
         entry.kind = kind
     if elapsed:
         entry.extras["duree_traitement"] = round(elapsed, 1)
+    if extras:
+        entry.extras.update(extras)
     if transcript is not None:
         _apply_extras(entry, transcript)
     append(entry)

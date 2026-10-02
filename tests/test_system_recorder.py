@@ -111,3 +111,57 @@ def test_resample_preserves_duration() -> None:
     assert out.dtype == np.int16
     # Meme taux : le signal est renvoye tel quel.
     assert _resample(samples, 16000, 16000) is samples
+
+
+def test_stream_resampler_is_continuous() -> None:
+    from vox.recorder import StreamResampler
+
+    resampler = StreamResampler(48000, 16000)
+    time_axis = np.arange(48000, dtype=np.float32) / 48000.0
+    source = (np.sin(2 * np.pi * 440 * time_axis) * 12000).astype(np.int16)
+
+    pieces = [
+        resampler.process(source[index : index + 1024])
+        for index in range(0, source.size, 1024)
+    ]
+    out = np.concatenate(pieces)
+    assert abs(out.size - 16000) <= 3
+    # Continuite : la plus grande variation reste celle d'un sinus 440 Hz a
+    # 16 kHz (~2070) ; une discontinuite entre blocs la ferait exploser.
+    assert float(np.max(np.abs(np.diff(out.astype(np.float32))))) < 3000
+    # Meme taux : aucun traitement.
+    assert StreamResampler(16000, 16000).process(source[:10]).size == 10
+
+
+def test_mic_recorder_writes_pcm_sink(tmp_path, monkeypatch) -> None:
+    from vox import recorder
+
+    callbacks: dict = {}
+
+    class _FakeStream:
+        def __init__(self, **kwargs) -> None:
+            callbacks["callback"] = kwargs["callback"]
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(recorder.sd, "InputStream", lambda **kwargs: _FakeStream(**kwargs))
+    sink = tmp_path / "micro.pcm"
+    device = recorder.Recorder(samplerate=16000, sink=sink)
+    device.start()
+
+    chunk = np.full((1600, 1), 5000, dtype=np.int16)
+    callbacks["callback"](chunk, 1600, None, None)
+    device.flush()
+
+    assert sink.exists() and sink.stat().st_size == 3200
+    assert device.written_seconds == pytest.approx(0.1)
+    assert device.has_speech
+    assert device.stop() == b""  # avec un sink, le WAV se finalise a cote
+    assert not device.recording

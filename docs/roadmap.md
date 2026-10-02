@@ -69,7 +69,8 @@ restent utilisables en texte seul, avec un avertissement dans le transcript.
 | 2.3 | Modes micro / système / les deux dans le menu et les réglages | [~] |
 | 2.4 | Pilule d'enregistrement (chrono, niveaux, arrêt) | [~] |
 | 2.5 | Transcription automatique à l'arrêt (réglage, coût affiché) | [~] |
-| 2.6 | Pièges : Bluetooth HFP, mode exclusif WASAPI, périphérique débranché | [ ] |
+| 2.6 | Pièges : Bluetooth HFP, mode exclusif WASAPI, périphérique débranché | [~] |
+| 2.7 | Robustesse : écriture au fil de l'eau, reprise après arrêt brutal, disque plein, plafond sans perte | [x] |
 
 **Test n°2 (prêt, à faire sur Windows)** : le menu de l'icône propose
 **« Enregistrer un appel (micro + son système)… »** — un clic démarre les deux
@@ -117,6 +118,24 @@ l'agent.
 
 ## Journal
 
+- **02/10/2026 (appels robustes)** — deux corrections issues du premier test
+  réel :
+  * **Diarisation adaptative** : quand le son du système est muet (téléphone
+    posé en haut-parleur devant l'ordinateur, casque dont le son n'est pas
+    capté), c'est le micro qui contient tout le monde : Vox le **diarise**
+    comme un fichier importé, avec des étiquettes honnêtes (« Locuteur 1/2 »)
+    et une ligne d'avertissement qui invite à renommer. S'il n'y a qu'une voix
+    dans le micro, elle est nommée « Moi ». Inversement, si le système porte la
+    parole, le micro reste « Moi » sans diarisation (moins cher, plus fiable).
+  * **Enregistrement incassable** : les deux pistes sont écrites **au fil de
+    l'eau** dans des `.pcm` 16 kHz (plus rien en mémoire, `flush` toutes les
+    200 ms) avec une fiche de suivi JSON. Si Vox plante, si le PC s'éteint ou
+    si la fenêtre est fermée pendant l'appel, le démarrage suivant finalise les
+    WAV et lance la transcription tout seul (« Appel — … (récupéré) »). Un
+    disque plein arrête proprement l'enregistrement au lieu de perdre le son ;
+    le plafond de 4 h est sans danger (il s'arrête et transcrit) ; si la
+    transcription échoue, l'audio reste dans la bibliothèque (entrée « Échec »,
+    bouton Retranscrire). 137 tests.
 - **02/10/2026 (confort Windows)** — **plus de fenêtres de console qui
   clignotent** : tous les programmes externes lancés par Vox passent par
   `proc.no_window()` (`CREATE_NO_WINDOW`) — `ffmpeg` (à chaque étape d'un
