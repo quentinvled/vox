@@ -11,6 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6.QtWidgets")
 
+from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QApplication
 
 from vox import audiofiles, imports, library, recordings, routing
@@ -114,6 +116,91 @@ def test_import_progress_row_appears(qapp, tmp_path: Path) -> None:
         assert window.progress_bar.value() == 2
         window.set_import_running(False)
         assert not window.progress_frame.isVisible()
+    finally:
+        window.deleteLater()
+
+
+# ----------------------------------------------------------------------
+# Glisser-déposer de fichiers
+# ----------------------------------------------------------------------
+def _send_drop(qapp, window, mime: QMimeData, *, complete: bool = True) -> None:
+    enter = QDragEnterEvent(
+        QPoint(10, 10), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier
+    )
+    qapp.sendEvent(window, enter)
+    if not complete:
+        return
+    drop = QDropEvent(
+        QPointF(10, 10), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier
+    )
+    qapp.sendEvent(window, drop)
+
+
+def _file_urls(paths: list[Path]) -> QMimeData:
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(path)) for path in paths])
+    return mime
+
+
+def test_drop_audio_files_starts_a_batch(qapp, tmp_path: Path) -> None:
+    first = tmp_path / "appel.m4a"
+    first.write_bytes(b"faux audio")
+    second = tmp_path / "reunion.mp3"
+    second.write_bytes(b"faux audio")
+
+    window = RecordingsWindow(Settings())
+    batches: list[list[str]] = []
+    window.import_requested.connect(batches.append)
+    try:
+        window.show()
+        qapp.processEvents()
+        assert window.drop_overlay.isHidden()
+
+        mime = _file_urls([first, second])
+        _send_drop(qapp, window, mime, complete=False)
+        assert not window.drop_overlay.isHidden()
+        assert "2 fichiers" in window.drop_detail.text()
+
+        _send_drop(qapp, window, mime)
+        assert batches == [[str(first), str(second)]]
+        assert window.drop_overlay.isHidden()
+    finally:
+        window.deleteLater()
+
+
+def test_drop_folder_only_takes_its_audio_files(qapp, tmp_path: Path) -> None:
+    folder = tmp_path / "appels"
+    folder.mkdir()
+    first = folder / "un.m4a"
+    first.write_bytes(b"faux audio")
+    second = folder / "deux.wav"
+    second.write_bytes(b"faux audio")
+    (folder / "notes.txt").write_text("pas de l'audio")
+    nested = folder / "sous-dossier"
+    nested.mkdir()
+    (nested / "profond.m4a").write_bytes(b"faux audio")
+
+    window = RecordingsWindow(Settings())
+    batches: list[list[str]] = []
+    window.import_requested.connect(batches.append)
+    try:
+        _send_drop(qapp, window, _file_urls([folder]))
+        assert len(batches) == 1
+        assert sorted(batches[0]) == sorted([str(first), str(second)])
+    finally:
+        window.deleteLater()
+
+
+def test_drop_without_files_is_ignored(qapp, tmp_path: Path) -> None:
+    window = RecordingsWindow(Settings())
+    batches: list[list[str]] = []
+    window.import_requested.connect(batches.append)
+    try:
+        mime = QMimeData()
+        mime.setText("simple texte, pas un fichier")
+        _send_drop(qapp, window, mime)
+        assert batches == []
+        assert window.drop_overlay.isHidden()
     finally:
         window.deleteLater()
 

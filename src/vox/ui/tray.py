@@ -95,10 +95,10 @@ class Tray(QSystemTrayIcon):
         dashboard_action.triggered.connect(self.stats_requested.emit)
         self._menu.addAction(dashboard_action)
 
-        self.import_action = QAction("Importer un fichier audio…", self._menu)
+        self.import_action = QAction("Importer des fichiers audio…", self._menu)
         self.import_action.setToolTip(
             "Appel, réunion, vocal WhatsApp : transcrire, diariser et ranger "
-            "dans la bibliothèque"
+            "dans la bibliothèque (sélection multiple possible)"
         )
         self.import_action.triggered.connect(self.import_requested.emit)
         self._menu.addAction(self.import_action)

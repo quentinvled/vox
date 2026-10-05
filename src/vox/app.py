@@ -17,7 +17,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QSystemTrayIcon
 
-from . import __version__, calls, injector, library, models, recordings, sounds, sources, updates
+from . import __version__, audiofiles, calls, injector, library, models, recordings, sounds, sources, updates
 from . import config as config_module
 from .api import Client
 from .autostart import set_autostart
@@ -1416,8 +1416,7 @@ class VoxApp(QObject):
             None,
             "Importer des fichiers audio",
             str(Path.home()),
-            "Audio (*.mp3 *.m4a *.wav *.flac *.ogg *.opus *.wma *.aac *.mp4 *.mkv *.webm)"
-            ";;Tous les fichiers (*)",
+            audiofiles.audio_filter(include_all=True),
         )
         if not paths:
             return

@@ -41,12 +41,6 @@ from ..reword import TONES
 from ..stats import format_duration, format_money
 from .wheel import NoWheelComboBox, NoWheelDoubleSpinBox, NoWheelSpinBox
 
-# Fichiers audio acceptés à l'import (mêmes formats que la bibliothèque).
-AUDIO_FILTER = (
-    "Audio (*.mp3 *.m4a *.wav *.ogg *.flac *.aac *.opus *.wma *.mp4 *.mkv *.webm);;"
-    "Tous les fichiers (*)"
-)
-
 IMPORT_HINT = (
     "L'import tourne en arrière-plan : tu peux réduire cette fenêtre ou passer "
     "à un autre onglet, il continue. Chaque fichier rejoint la bibliothèque dès "
@@ -694,8 +688,8 @@ class SettingsWindow(QDialog):
         self.import_files_list = _FileDropList()
         self.import_files_list.setMinimumHeight(110)
         self.import_files_list.setToolTip(
-            "Glisse-dépose des fichiers audio (appel, réunion, vocal WhatsApp) "
-            "ici, ou utilise « Ajouter des fichiers… »."
+            "Glisse-dépose des fichiers audio ou un dossier (appel, réunion, "
+            "vocal WhatsApp) ici, ou utilise « Ajouter des fichiers… »."
         )
         self.import_files_list.files_dropped.connect(self.add_import_files)
         files_layout.addWidget(self.import_files_list)
@@ -844,7 +838,10 @@ class SettingsWindow(QDialog):
 
     def _choose_import_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Importer des fichiers audio", str(Path.home()), AUDIO_FILTER
+            self,
+            "Importer des fichiers audio",
+            str(Path.home()),
+            audiofiles.audio_filter(include_all=True),
         )
         if paths:
             self.add_import_files(list(paths))
@@ -852,9 +849,8 @@ class SettingsWindow(QDialog):
     def add_import_files(self, paths: list) -> None:
         """Ajoute des fichiers a la liste (bouton ou glisser-deposer)."""
         known = set(self._import_paths())
-        for raw in paths:
-            path = str(Path(str(raw)).expanduser()) if raw else ""
-            if not path or path in known or not Path(path).is_file():
+        for path in audiofiles.expand_import_paths(paths):
+            if path in known:
                 continue
             known.add(path)
             item = QListWidgetItem(f"{Path(path).name}  ·  {_file_size(path)}")

@@ -12,9 +12,10 @@ actif par défaut (ton « Nettoyer », désactivable d'un clic dans la pilule),
 statistiques d'usage et historique audio local. Les fichiers importés (appels,
 réunions, vocaux) sont transcrits, diarisés puis nettoyés automatiquement, avec
 transcript cliquable et export md/txt/srt/vtt/json — import par le bouton
-« ☰ » de la pilule, « Importer un fichier audio… » dans le menu de l'icône, ou
-l'onglet **Réglages → Importer** (glisser-déposer, modèle, diarisation, nombre
-de personnes, estimation du coût, progression en arrière-plan).
+« ☰ » de la pilule, « Importer des fichiers audio… » dans le menu de l'icône,
+un glisser-déposer de plusieurs fichiers dans la bibliothèque, ou l'onglet
+**Réglages → Importer** (modèle, diarisation, nombre de personnes, estimation
+du coût, progression en arrière-plan).
 L'état des entrées audio (micro, son du système, applications en cours) est
 visible dans la zone de notification, testé en continu. Un clic sur
 **« Enregistrer un appel (micro + son système)… »** capture l'appel en deux

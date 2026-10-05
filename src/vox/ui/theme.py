@@ -290,6 +290,15 @@ def app_qss(theme: str) -> str:
     QMenu::item:selected {{ background: {c['accent_soft']}; }}
     QMenu::separator {{ height: 1px; background: {c['border']}; margin: 5px 8px; }}
 
+    /* ---------- Dépôt de fichiers (bibliothèque) ---------- */
+    QFrame#dropOverlay {{
+        background: {c['card']};
+        border: 2px dashed {c['accent']};
+        border-radius: 18px;
+    }}
+    QLabel#dropTitle {{ font-size: 18px; font-weight: 700; }}
+    QLabel#dropHint {{ color: {c['muted']}; font-size: 12px; }}
+
     /* ---------- Onglets ---------- */
     QTabWidget::pane {{
         border: 1px solid {c['border']};

@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__, library, recordings
+from .. import __version__, audiofiles, library, recordings
 from ..config import Settings
 from ..library import ImportEntry
 from ..recordings import Recording
@@ -122,9 +122,13 @@ class RecordingsWindow(QWidget):
         self._seeking = False
         self._filter = "tout"
         self._highlighted = -1
+        self._drop_paths: list[str] = []
 
         self.setWindowTitle(f"Bibliothèque — Vox {__version__}")
         self.setMinimumSize(940, 660)
+        # La fenêtre entière accepte les fichiers déposés depuis l'explorateur :
+        # un lot arrive d'un coup dans la file d'import (voir dragEnterEvent).
+        self.setAcceptDrops(True)
 
         self.player = QMediaPlayer(self)
         self.audio_out = QAudioOutput(self)
@@ -160,6 +164,10 @@ class RecordingsWindow(QWidget):
 
         outer.addWidget(self._build_player())
 
+        # Bandeau affiché pendant un glisser-déposer de fichiers (au-dessus de
+        # tout le contenu, voir _show_drop_overlay).
+        self.drop_overlay = self._build_drop_overlay()
+
     def _build_header(self) -> QHBoxLayout:
         header = QHBoxLayout()
         title = QLabel("Bibliothèque")
@@ -184,13 +192,18 @@ class RecordingsWindow(QWidget):
         self.search_edit.setPlaceholderText("Rechercher…")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setFixedWidth(220)
+        # Sans cela, un fichier déposé sur la barre de recherche serait inséré
+        # comme texte au lieu d'être importé (Qt route le dépôt vers la fenêtre).
+        self.search_edit.setAcceptDrops(False)
         self.search_edit.textChanged.connect(self._apply_filter)
         header.addWidget(self.search_edit)
 
         self.import_button = QPushButton("Importer")
         self.import_button.setObjectName("primary")
         self.import_button.setToolTip(
-            "Transcrire et diariser un fichier audio (mp3, m4a, wav, ogg…)"
+            "Transcrire et diariser un ou plusieurs fichiers audio (mp3, m4a, "
+            "wav, ogg…). Tu peux aussi glisser-déposer des fichiers dans la "
+            "fenêtre."
         )
         self.import_button.clicked.connect(self._on_import_clicked)
         header.addWidget(self.import_button)
@@ -275,6 +288,8 @@ class RecordingsWindow(QWidget):
 
         self.text_view = QPlainTextEdit()
         self.text_view.setReadOnly(True)
+        # Un dépôt de fichier sur le texte doit importer, pas insérer un chemin.
+        self.text_view.setAcceptDrops(False)
         self.text_view.setPlaceholderText(
             "Le texte transcrit apparaîtra ici. Sélectionne une dictée dans la "
             "liste de gauche."
@@ -429,6 +444,98 @@ class RecordingsWindow(QWidget):
         layout.addWidget(self.time_label)
         return bar
 
+    def _build_drop_overlay(self) -> QFrame:
+        """Bandeau « Déposez pour importer », affiché pendant le survol."""
+        overlay = QFrame(self)
+        overlay.setObjectName("dropOverlay")
+        # Le bandeau ne doit jamais intercepter le dépôt : transparent à la
+        # souris, les événements continuent d'arriver à la fenêtre.
+        overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout = QVBoxLayout(overlay)
+        layout.setSpacing(6)
+        layout.addStretch(1)
+        title = QLabel("Déposez pour importer")
+        title.setObjectName("dropTitle")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+        self.drop_detail = QLabel("")
+        self.drop_detail.setObjectName("dropHint")
+        self.drop_detail.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.drop_detail)
+        layout.addStretch(1)
+        overlay.hide()
+        return overlay
+
+    # ------------------------------------------------------------------
+    # Import : glisser-déposer depuis l'explorateur
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _drop_candidates(mime) -> list[str]:
+        if not mime.hasUrls():
+            return []
+        return audiofiles.expand_import_paths(
+            url.toLocalFile() for url in mime.urls() if url.isLocalFile()
+        )
+
+    def _show_drop_overlay(self, count: int) -> None:
+        if count > 1:
+            self.drop_detail.setText(
+                f"{count} fichiers — transcription, diarisation puis nettoyage, "
+                "comme avec « Importer »."
+            )
+        else:
+            self.drop_detail.setText(
+                "Le fichier sera transcrit, diarisé puis rangé dans la "
+                "bibliothèque."
+            )
+        self._place_drop_overlay()
+        self.drop_overlay.raise_()
+        self.drop_overlay.show()
+
+    def _place_drop_overlay(self) -> None:
+        marge = 10
+        self.drop_overlay.setGeometry(
+            self.rect().adjusted(marge, marge, -marge, -marge)
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self.drop_overlay.isVisible():
+            self._place_drop_overlay()
+
+    def dragEnterEvent(self, event) -> None:
+        paths = self._drop_candidates(event.mimeData())
+        if not paths:
+            self._drop_paths = []
+            event.ignore()
+            return
+        self._drop_paths = paths
+        event.acceptProposedAction()
+        self._show_drop_overlay(len(paths))
+
+    def dragMoveEvent(self, event) -> None:
+        if self._drop_paths:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:
+        self._drop_paths = []
+        self.drop_overlay.hide()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        paths = self._drop_candidates(event.mimeData())
+        self._drop_paths = []
+        self.drop_overlay.hide()
+        if not paths:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        # Un seul lot : le worker d'import enchaîne les fichiers et la
+        # progression s'affiche fichier par fichier.
+        self.import_requested.emit(paths)
+
     # ------------------------------------------------------------------
     # Import : progression
     # ------------------------------------------------------------------
@@ -533,8 +640,8 @@ class RecordingsWindow(QWidget):
         if not rows:
             self.list_hint.setText(
                 "Rien pour l'instant. Dicte avec "
-                f"{self.settings.hotkey}, ou clique sur « Importer » pour "
-                "transcrire un fichier audio."
+                f"{self.settings.hotkey}, glisse-dépose des fichiers audio ici, "
+                "ou clique sur « Importer » pour les transcrire."
             )
             self._show_nothing()
             return
@@ -1005,8 +1112,7 @@ class RecordingsWindow(QWidget):
             self,
             "Importer des fichiers audio",
             str(Path.home()),
-            "Audio (*.mp3 *.m4a *.wav *.ogg *.flac *.aac *.opus *.wma *.mp4 *.mkv);;"
-            "Tous les fichiers (*)",
+            audiofiles.audio_filter(include_all=True),
         )
         if paths:
             self.import_requested.emit(list(paths))

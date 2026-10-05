@@ -14,6 +14,7 @@ import functools
 import re
 import shutil
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +45,57 @@ FORMATS: dict[str, tuple[str, list[str]]] = {
     "wav": ("pcm_s16le", ["-f", "wav"]),
     "mp3": ("libmp3lame", []),
 }
+
+# Formats proposés à l'import : source unique des filtres « Ouvrir » et des
+# extensions retenues quand un dossier est déposé dans la bibliothèque.
+SUPPORTED_SUFFIXES = (
+    ".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus",
+    ".wma", ".aac", ".mp4", ".mkv", ".webm",
+)
+
+
+def audio_filter(include_all: bool = False) -> str:
+    """Filtre des boîtes « Ouvrir » pour choisir un ou plusieurs fichiers."""
+    filtres = "Audio (" + " ".join(f"*{suffix}" for suffix in SUPPORTED_SUFFIXES) + ")"
+    if include_all:
+        return f"{filtres};;Tous les fichiers (*)"
+    return filtres
+
+
+def expand_import_paths(paths: Iterable[str]) -> list[str]:
+    """Chemins importables d'un lot déposé ou choisi depuis l'explorateur.
+
+    Un fichier est gardé tel quel, même si son extension sort de la liste :
+    ffmpeg décidera (et l'échec éventuel s'affichera dans le lot). Un dossier
+    apporte ses fichiers audio directs, sans descendre dans les sous-dossiers —
+    déposer « Appels 2026 » ne doit pas scanner tout le disque.
+    """
+    collected: list[str] = []
+    for raw in paths:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        path = Path(value).expanduser()
+        if path.is_file():
+            collected.append(str(path))
+        elif path.is_dir():
+            try:
+                children = sorted(path.iterdir())
+            except OSError:
+                continue
+            collected.extend(
+                str(child)
+                for child in children
+                if child.is_file()
+                and child.suffix.lower() in SUPPORTED_SUFFIXES
+            )
+    unique: list[str] = []
+    seen: set[str] = set()
+    for path in collected:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
 
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
 _SILENCE_START_RE = re.compile(r"silence_start:\s*(-?\d+(?:\.\d+)?)")

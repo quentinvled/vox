@@ -179,3 +179,45 @@ def test_extract_single_channel(tmp_path: Path) -> None:
     target = audiofiles.extract(path, 0.0, 1.0, tmp_path / "gauche.flac", channel=0, fmt="flac")
     assert target.exists()
     assert audiofiles.probe(target).channels == 1
+
+
+# ----------------------------------------------------------------------
+# Collecte des chemins a importer (depot de fichiers, dossiers)
+# ----------------------------------------------------------------------
+def test_expand_import_paths_keeps_files_and_expands_folders(tmp_path: Path) -> None:
+    direct = tmp_path / "vocal.opus"
+    direct.write_bytes(b"x")
+    folder = tmp_path / "appels"
+    folder.mkdir()
+    first = folder / "un.m4a"
+    first.write_bytes(b"x")
+    second = folder / "deux.MP3"  # extension en majuscules acceptee
+    second.write_bytes(b"x")
+    (folder / "notes.txt").write_text("pas de l'audio")
+    nested = folder / "sous-dossier"
+    nested.mkdir()
+    (nested / "profond.m4a").write_bytes(b"x")
+
+    paths = audiofiles.expand_import_paths([str(direct), str(folder)])
+
+    assert paths == [str(direct), str(second), str(first)]
+
+
+def test_expand_import_paths_dedupes_and_ignores_missing(tmp_path: Path) -> None:
+    first = tmp_path / "meme.m4a"
+    first.write_bytes(b"x")
+    other = tmp_path / "autre.m4a"
+    other.write_bytes(b"x")
+
+    paths = audiofiles.expand_import_paths(
+        [str(first), "", str(tmp_path / "absent.mp3"), str(first), str(other)]
+    )
+
+    assert paths == [str(first), str(other)]
+
+
+def test_audio_filter_lists_supported_suffixes() -> None:
+    filtre = audiofiles.audio_filter(include_all=True)
+    for suffix in audiofiles.SUPPORTED_SUFFIXES:
+        assert f"*{suffix}" in filtre
+    assert filtre.endswith(";;Tous les fichiers (*)")
