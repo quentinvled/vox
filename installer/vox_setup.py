@@ -101,7 +101,11 @@ def run_steps(on_step: Callable[[int, str, str], None], launch: bool = True) -> 
         )
 
     on_step(1, "Arrêt de Vox s'il est en cours…", "")
-    stopped = install.stop_running()
+    # `exclude_self=False` : l'installeur s'appelle « Vox-Setup.exe », donc
+    # `taskkill /IM Vox.exe` ne peut pas l'atteindre. Ne rien exclure garantit
+    # que Vox (dont celui qui nous a lances) est bien ferme — sinon `Vox.exe`
+    # reste verrouille et la copie echoue en silence.
+    stopped = install.stop_running(exclude_self=False)
     log.info("Instances arretees : %s", stopped)
 
     destination = install.install_dir()

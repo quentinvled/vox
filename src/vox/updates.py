@@ -32,6 +32,7 @@ import contextlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -191,12 +192,59 @@ def cleanup(keep: Path | None = None) -> None:
             continue
 
 
+def _relaunch_script(pid: int, target: Path) -> str:
+    """Script shell : attend la fin de `pid`, puis lance `target`."""
+    return (
+        "i=0\n"
+        f"while kill -0 {pid} 2>/dev/null; do\n"
+        "  i=$((i+1))\n"
+        "  if [ $i -gt 150 ]; then break; fi\n"
+        "  sleep 0.2\n"
+        "done\n"
+        f"exec {shlex.quote(str(target))}\n"
+    )
+
+
+# Variables injectees par le lanceur AppImage. On les retire a la relance pour
+# que la nouvelle instance monte bien *son* fichier et non l'ancien montage.
+_APPIMAGE_ENV = (
+    "APPIMAGE",
+    "APPDIR",
+    "OWD",
+    "ARGV0",
+    "APPIMAGE_EXTRACT_AND_RUN",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "PYTHONHOME",
+    "PYTHONPATH",
+)
+
+
+def _relaunch_later(target: Path) -> None:
+    """Relance `target` des que le processus courant aura disparu.
+
+    Indispensable : Vox n'accepte qu'une seule instance. Lancer la nouvelle
+    version tout de suite la ferait passer pour une « deuxieme instance » : elle
+    transmettrait « show » a celle-ci (encore vivante) puis se fermerait — Vox ne
+    redemarrerait jamais. On attend donc la disparition de ce processus.
+    """
+    script = _relaunch_script(os.getpid(), target)
+    env = {key: value for key, value in os.environ.items() if key not in _APPIMAGE_ENV}
+    subprocess.Popen(  # noqa: S603
+        ["/bin/sh", "-c", script],
+        env=env,
+        cwd=str(target.parent),
+        start_new_session=True,
+        close_fds=True,
+    )
+
+
 def install(downloaded: Path) -> tuple[bool, str]:
     """Installe une mise a jour telechargee et relance Vox.
 
-    Renvoie `(True, "")` quand l'application doit se fermer tout de suite :
-    la nouvelle version est lancee (Linux) ou va l'etre par l'installeur
-    (Windows). Sinon `(False, raison)`.
+    Renvoie `(True, "")` quand l'application doit se fermer tout de suite : la
+    nouvelle version sera lancee des que ce processus aura disparu (Linux) ou
+    par l'installeur (Windows). Sinon `(False, raison)`.
     """
     downloaded = Path(downloaded)
     if not downloaded.exists():
@@ -231,7 +279,7 @@ def install(downloaded: Path) -> tuple[bool, str]:
         with contextlib.suppress(OSError):
             downloaded.unlink()
         try:
-            subprocess.Popen([str(target)], close_fds=True)  # noqa: S603
+            _relaunch_later(target)
         except OSError as exc:
             return False, f"relance impossible ({exc})"
         return True, ""
