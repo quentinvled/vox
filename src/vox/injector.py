@@ -17,6 +17,7 @@ if sys.platform == "win32":
     from .injector_win import (
         InjectorError,
         get_clipboard_text,
+        get_foreground_window_id,
         get_foreground_window_title,
         inject,
         paste_text,
@@ -30,6 +31,7 @@ else:
     from .injector_x11 import (
         InjectorError,
         get_clipboard_text,
+        get_foreground_window_id,
         get_foreground_window_title,
         inject,
         paste_text,
@@ -44,6 +46,7 @@ __all__ = [
     "BACKEND",
     "InjectorError",
     "get_clipboard_text",
+    "get_foreground_window_id",
     "get_foreground_window_title",
     "inject",
     "paste_text",

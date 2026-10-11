@@ -237,10 +237,28 @@ def get_foreground_window_title() -> str:
         return ""
 
 
+def get_foreground_window_id() -> int:
+    """Identifiant de la fenetre active X11 (0 si indisponible)."""
+    try:
+        from Xlib import display
+    except Exception:
+        return 0
+    try:
+        connection = display.Display()
+        try:
+            window = connection.get_input_focus().focus
+            return int(getattr(window, "id", 0) or 0)
+        finally:
+            connection.close()
+    except Exception:
+        return 0
+
+
 __all__ = [
     "InjectorError",
     "clipboard_available",
     "get_clipboard_text",
+    "get_foreground_window_id",
     "get_foreground_window_title",
     "inject",
     "paste_text",

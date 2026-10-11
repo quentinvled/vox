@@ -488,17 +488,20 @@ class SettingsWindow(QDialog):
         self.hide_delay_spin.setSuffix(" s")
         self.hide_delay_spin.setSpecialValueText("jamais")
         self.hide_delay_spin.setToolTip(
-            "Délai avant que la pilule se masque toute seule. 0 = elle reste "
-            "affichée jusqu'à ce que tu la fermes avec le ✕.\n\n"
-            "Sans effet tant que « Disparaître dès la fin de l'écoute » est cochée : "
-            "la pilule ne survit alors pas à l'enregistrement."
+            "Délai avant que la pilule se masque toute seule, une fois le texte "
+            "inséré. 0 = elle reste affichée jusqu'à ce que tu la fermes avec le ✕.\n\n"
+            "Sans effet tant que « Disparaître dès l'insertion » est cochée : la "
+            "pilule s'efface alors dès que le texte est inséré."
         )
         ui_form.addRow("Masquer la pilule après", self.hide_delay_spin)
 
-        self.hide_after_check = QCheckBox("Disparaître dès la fin de l'écoute")
+        self.hide_after_check = QCheckBox("Disparaître dès l'insertion")
         self.hide_after_check.setToolTip(
-            "La pilule ne s'affiche que pendant l'enregistrement, puis s'efface "
-            "toute seule. Les erreurs restent visibles quelques secondes."
+            "La pilule reste visible pendant l'écoute et le traitement, puis "
+            "s'efface dès que le texte est inséré.\n\n"
+            "Si l'insertion n'est pas confirmée (focus perdu, mauvaise fenêtre), "
+            "elle ne disparaît jamais toute seule : tu peux copier le texte ou le "
+            "réinsérer depuis l'icône."
         )
         self.hide_after_check.toggled.connect(self._sync_hide_delay_state)
         ui_form.addRow("", self.hide_after_check)

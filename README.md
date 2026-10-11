@@ -15,6 +15,12 @@ je m'en occupe demain » et le texte inséré est le message fini. Un texte copi
 concis » réécrit ce qui est dans le presse-papier. Un nouvel appui sur Espace
 revient à la dictée normale.
 
+Le texte n'est jamais perdu : la pilule reste affichée pendant tout le
+traitement et ne s'efface qu'une fois l'insertion **confirmée** (la fenêtre
+active est la même qu'à l'arrêt de l'écoute). Sans confirmation, elle reste à
+l'écran avec le texte prêt à **copier** ou **réinsérer** depuis le menu de
+l'icône.
+
 Transcription via OpenRouter (Whisper, Qwen-ASR, Gemini…), nettoyage LLM
 actif par défaut (ton « Nettoyer », désactivable d'un clic dans la pilule),
 statistiques d'usage et historique audio local. Les fichiers importés (appels,

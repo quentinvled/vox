@@ -80,6 +80,33 @@ def test_overlay_shows_instruction_mode(qapp) -> None:
         overlay.deleteLater()
 
 
+def test_overlay_review_state_never_auto_hides(qapp) -> None:
+    overlay = Overlay()
+    try:
+        overlay.show()
+        qapp.processEvents()
+        overlay.set_state("review", message="Insertion non confirmée")
+        assert overlay.title.text() == "À vérifier"
+        # Le masquage automatique ne doit pas s'appliquer à cet état.
+        overlay._auto_hide()
+        assert overlay.isVisible()
+    finally:
+        overlay.deleteLater()
+
+
+def test_unconfirmed_insertion_keeps_the_pill(qapp, monkeypatch, tmp_path) -> None:
+    from vox import app as app_module
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "cle-de-test")
+    vox = app_module.VoxApp(qapp)
+    try:
+        vox._on_finalized("Un message.", {"insertion_confirmed": False})
+        assert vox.overlay._state == "review"
+        assert vox.overlay.isVisible()
+    finally:
+        vox.quit()
+
+
 def test_overlay_hides_space_hint_when_disabled(qapp) -> None:
     overlay = Overlay()
     try:

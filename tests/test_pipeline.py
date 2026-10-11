@@ -147,6 +147,29 @@ def test_instruct_returns_empty_on_failure(qapp, monkeypatch) -> None:
     assert notices and notices[0][0] == "error"
 
 
+def test_insertion_confirmed_compares_the_target_window(qapp, monkeypatch) -> None:
+    pipeline = Pipeline(Settings())
+    try:
+        pipeline._target_window = 111
+        monkeypatch.setattr("vox.pipeline.injector.get_foreground_window_id", lambda: 111)
+        assert pipeline._insertion_confirmed() is True
+
+        # Focus perdu pendant le traitement : le texte n'est pas alle au bon endroit.
+        monkeypatch.setattr("vox.pipeline.injector.get_foreground_window_id", lambda: 222)
+        assert pipeline._insertion_confirmed() is False
+
+        # Fenetre cible inconnue : on ne bloque pas (X11 sans Xlib, Wayland...).
+        pipeline._target_window = 0
+        assert pipeline._insertion_confirmed() is True
+
+        # Lecture impossible au moment de la verifier : on suppose bon.
+        pipeline._target_window = 111
+        monkeypatch.setattr("vox.pipeline.injector.get_foreground_window_id", lambda: 0)
+        assert pipeline._insertion_confirmed() is True
+    finally:
+        pipeline.shutdown()
+
+
 def test_pipeline_reword_falls_back_to_raw_text(qapp) -> None:
     class _Broken:
         def chat(self, *_args, **_kwargs):

@@ -52,6 +52,12 @@ SERVER_NAME = "vox-single-instance"
 # Duree d'affichage d'un message d'erreur quand la pilule se cache d'elle-meme.
 NOTICE_SECONDS = 6
 
+# Insertion non confirmee : la pilule reste affichee avec ce message.
+REVIEW_HINT = (
+    "Texte prêt, insertion non confirmée. La pilule reste affichée : copie-le "
+    "ou réinsère-le depuis le menu de l'icône."
+)
+
 # Enregistrement d'appel : deux pistes (micro + son du systeme), 4 h maximum ;
 # en dessous de ce seuil, c'est un appui accidentel : on ne garde rien.
 CALL_TITLE = "Enregistrement de l'appel"
@@ -721,13 +727,16 @@ class VoxApp(QObject):
     # ------------------------------------------------------------------
     # Etats
     # ------------------------------------------------------------------
-    def _show_progress(self) -> None:
+    def _show_progress(self, state: str) -> None:
         """Pilule pendant le traitement.
 
-        Par defaut elle disparait des la fin de l'ecoute : l'utilisateur n'a
-        rien a fermer. Le reglage inverse l'ancien comportement.
+        Elle reste visible tant que le texte n'est pas insere : on veut voir le
+        resultat et etre sur qu'il est bien parti avant qu'elle disparaisse. Le
+        masquage automatique (reglage) ne joue donc qu'apres l'insertion.
         """
-        if self.settings.hide_after_listening:
+        if state in {"transcribing", "rewording", "instructing"}:
+            self.overlay.show_pill(0)
+        elif self.settings.hide_after_listening:
             self.overlay.hide_pill()
         else:
             self.overlay.show_pill()
@@ -756,19 +765,25 @@ class VoxApp(QObject):
         elif state == "idle":
             self.overlay.set_state("idle", detail=f"{self.hotkey_label} pour dicter")
             self.tray.set_status("Pret")
-            self._show_progress()
+            self._show_progress(state)
         elif state == "transcribing":
             self.overlay.set_state("transcribing", detail="Patientez…")
             self.tray.set_status("Transcription…")
-            self._show_progress()
+            self._show_progress(state)
         elif state == "rewording":
             self.overlay.set_state("rewording", detail="Patientez…")
             self.tray.set_status("Reformulation…")
-            self._show_progress()
+            self._show_progress(state)
         elif state == "instructing":
             self.overlay.set_state("instructing", detail="J'exécute la consigne…")
             self.tray.set_status("Consigne…")
-            self._show_progress()
+            self._show_progress(state)
+        elif state == "review":
+            # Texte pret mais insertion non confirmee : la pilule reste affichee
+            # (jamais masquee toute seule) jusqu'a ce que l'utilisateur tranche.
+            self.tray.set_status("À vérifier")
+            self.overlay.set_state("review", message=REVIEW_HINT)
+            self.overlay.show_pill(0)
         elif state == "done":
             self.tray.set_status("Prêt")
             # L'etat doit sortir de « transcription », sinon le masquage
@@ -801,8 +816,15 @@ class VoxApp(QObject):
     def _on_transcript(self, text: str, _meta: dict) -> None:
         self.overlay.set_state("transcribing", detail=text[:70] + ("…" if len(text) > 70 else ""))
 
-    def _on_finalized(self, text: str, _meta: dict) -> None:
-        self.overlay.set_state("done", message=text)
+    def _on_finalized(self, text: str, meta: dict) -> None:
+        if meta.get("insertion_confirmed", True):
+            self.overlay.set_state("done", message=text)
+        else:
+            # Pas de validation a l'aveugle : on n'envoie pas l'Entree
+            # automatique et on laisse la pilule visible pour relecture.
+            self._pending_enter = False
+            self.overlay.set_state("review", message=REVIEW_HINT)
+            self.overlay.show_pill(0)
         if self._pending_enter:
             self._pending_enter = False
             QTimer.singleShot(120, injector.press_enter)

@@ -119,6 +119,16 @@ l'agent.
 
 ## Journal
 
+- **11/10/2026 (insertion confirmée)** — la pilule ne se masque plus avant
+  d'être **sûr** que le texte est parti : elle reste visible pendant la
+  transcription/le traitement, puis compare la **fenêtre active** juste après
+  l'insertion à celle qu'elle était à l'arrêt de l'écoute
+  (`injector.get_foreground_window_id`, handle Windows / id X11 — bien plus
+  fiable qu'un titre qui change tout seul). Si l'insertion n'est pas confirmée
+  (focus perdu, mauvaise fenêtre, erreur d'injection), la pilule **persiste** en
+  état « À vérifier » (sous-titre orange) et ne s'efface jamais seule : le texte
+  reste copiable/réinsérable depuis l'icône, et l'Entrée automatique est annulée.
+  Réglage renommé « Disparaître dès l'insertion ». 159 tests.
 - **11/10/2026 (mode consigne)** — étape 4.0 : pendant l'écoute, **Espace**
   bascule entre dictée et **consigne** (sans raccourci supplémentaire, dans les
   deux modes push-to-talk et bascule). En mode consigne, la parole est un ordre

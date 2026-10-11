@@ -277,9 +277,20 @@ def get_foreground_window_title() -> str:
     return buffer.value
 
 
+def get_foreground_window_id() -> int:
+    """Handle de la fenetre active (0 si indisponible).
+
+    Sert a verifier, apres l'insertion, que le texte est alle dans la meme
+    fenetre qu'au moment de l'arreter : bien plus fiable que le titre, qui peut
+    changer tout seul (page web, document modifie...).
+    """
+    return int(user32.GetForegroundWindow() or 0)
+
+
 __all__ = [
     "InjectorError",
     "get_clipboard_text",
+    "get_foreground_window_id",
     "get_foreground_window_title",
     "inject",
     "paste_text",

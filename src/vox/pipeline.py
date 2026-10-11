@@ -80,6 +80,9 @@ class Pipeline(QObject):
         # une consigne executee par le modele de chat (voir toggle_mode).
         self._mode = "dictation"
         self._last_injection_at = 0.0
+        # Fenetre visee (capturee a l'arret) : sert a confirmer, apres coup, que
+        # le texte est bien insere la ou l'utilisateur se trouvait.
+        self._target_window = 0
         self._cached_client = None
         self._cached_signature: tuple | None = None
 
@@ -144,6 +147,9 @@ class Pipeline(QObject):
             return
         wav = self.recorder.stop()
         had_sound = self.recorder.has_speech
+        # On note la fenetre active maintenant : c'est la ou le texte devra
+        # atterrir. La comparaison apres insertion detecte une perte de focus.
+        self._target_window = _foreground_id()
         self._recording = False
         self.recording_changed.emit(False)
         if self.settings.sounds:
@@ -277,6 +283,10 @@ class Pipeline(QObject):
             self._inject(final)
         except injector.InjectorError as exc:
             injection_error = str(exc)
+        # Confirmation : le texte est-il bien alle dans la fenetre visee ? Sans
+        # certitude, l'interface ne se masque pas d'elle-meme (voir app.py).
+        confirmed = injection_error is None and self._insertion_confirmed()
+        meta["insertion_confirmed"] = confirmed
 
         self._save_history(final, meta)
         if audio:
@@ -292,9 +302,24 @@ class Pipeline(QObject):
                 language=meta.get("language"),
             )
         self._set_busy(False)
+        self.last_meta = dict(meta)
 
-        if injection_error:
-            self._fail(f"Texte prêt mais insertion impossible : {injection_error}")
+        if not confirmed:
+            # Texte pret mais non confirme : on informe et on laisse la fenetre
+            # visible, pour que l'utilisateur puisse le copier ou le reinserer.
+            if injection_error:
+                if self.settings.sounds:
+                    sounds.play("error")
+                self._notify(
+                    "error", f"Texte prêt mais insertion impossible : {injection_error}"
+                )
+            else:
+                self._notify(
+                    "info",
+                    "Texte prêt mais insertion non confirmée : copie-le ou "
+                    "réinsère-le depuis l'icône.",
+                )
+            self.status_changed.emit("review")
             self.finalized.emit(final, dict(meta))
             return
 
@@ -302,6 +327,22 @@ class Pipeline(QObject):
         self.finalized.emit(final, dict(meta))
         if self.settings.sounds:
             sounds.play("done")
+
+    def _insertion_confirmed(self) -> bool:
+        """Verifie que le texte est reste dans la fenetre visee.
+
+        On compare la fenetre active maintenant a celle qui l'etait a l'arret de
+        la dictee. Si l'une des deux est indisponible (Wayland, X11 sans Xlib,
+        fenetre sans identifiant), on ne bloque pas : on suppose l'insertion
+        correcte plutot que de retenir la fenetre pour rien.
+        """
+        target = self._target_window
+        if not target:
+            return True
+        current = _foreground_id()
+        if not current:
+            return True
+        return current == target
 
     def _reword(self, client: Client, text: str):
         try:
@@ -545,6 +586,14 @@ class Pipeline(QObject):
         if self._cached_client is not None:
             self._cached_client.close()
             self._cached_client = None
+
+
+def _foreground_id() -> int:
+    """Identifiant de la fenetre active, 0 si le systeme ne sait pas le dire."""
+    try:
+        return int(injector.get_foreground_window_id() or 0)
+    except Exception:
+        return 0
 
 
 # ----------------------------------------------------------------------

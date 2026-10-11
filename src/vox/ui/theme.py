@@ -22,6 +22,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "accent": "#6d9dfb",
         "accent_soft": "rgba(109, 157, 251, 38)",
         "danger": "#f87171",
+        "warn": "#f0b24a",
         "success": "#4ade80",
         "wave_lo": "#4b7bd6",
         "wave_hi": "#7fd4ff",
@@ -38,6 +39,7 @@ PALETTES: dict[str, dict[str, str]] = {
         "accent": "#2f6bd8",
         "accent_soft": "rgba(47, 107, 216, 30)",
         "danger": "#c02b2b",
+        "warn": "#a8620a",
         "success": "#15803d",
         "wave_lo": "#5b8def",
         "wave_hi": "#8fb8ff",
@@ -153,6 +155,10 @@ def app_qss(theme: str) -> str:
     QLabel#overlaySubtitleError {{
         font-size: 12px;
         color: {c['danger']};
+    }}
+    QLabel#overlaySubtitleWarn {{
+        font-size: 12px;
+        color: {c['warn']};
     }}
 
     /* ---------- Puce (chip) ---------- */

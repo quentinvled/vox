@@ -31,6 +31,7 @@ STATE_TITLES = {
     "rewording": "Reformulation…",
     "instructing": "Rédaction…",
     "done": "Texte inséré",
+    "review": "À vérifier",
     "error": "Problème",
 }
 
@@ -294,7 +295,12 @@ class Overlay(QWidget):
             label = f"✦ Consigne · {label}"
         self.title.setText(label)
 
-        wanted = "overlaySubtitleError" if state == "error" else "overlaySubtitle"
+        if state == "error":
+            wanted = "overlaySubtitleError"
+        elif state == "review":
+            wanted = "overlaySubtitleWarn"
+        else:
+            wanted = "overlaySubtitle"
         if self.subtitle.objectName() != wanted:
             self.subtitle.setObjectName(wanted)
             self.subtitle.style().unpolish(self.subtitle)
@@ -306,6 +312,10 @@ class Overlay(QWidget):
             self._set_subtitle(detail or "Patientez…")
         elif state == "done":
             self._set_subtitle(message or detail)
+        elif state == "review":
+            self._set_subtitle(
+                message or detail or "Vérifie que le texte est bien inséré."
+            )
         elif state == "error":
             self._set_subtitle(message)
         else:
@@ -370,7 +380,15 @@ class Overlay(QWidget):
         self._menu.exec(self.model_chip.mapToGlobal(QPoint(0, self.model_chip.height())))
 
     def _auto_hide(self) -> None:
-        if self._state in {"recording", "transcribing", "rewording", "instructing"}:
+        # La pilule ne disparaît jamais tant que le résultat n'est pas confirmé
+        # (état « review ») : on ne masque rien sans certitude.
+        if self._state in {
+            "recording",
+            "transcribing",
+            "rewording",
+            "instructing",
+            "review",
+        }:
             return
         self.hide()
 
