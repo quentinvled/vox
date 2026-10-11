@@ -78,6 +78,20 @@ def test_window_lists_dictations_and_imports(qapp, tmp_path: Path) -> None:
         window.deleteLater()
 
 
+def test_refresh_button_reloads_the_list(qapp, tmp_path: Path) -> None:
+    window = RecordingsWindow(Settings())
+    try:
+        assert window.list_widget.count() == 0
+        # Une dictée arrive pendant que la fenêtre est ouverte : elle n'est
+        # visible qu'après Actualiser (ou F5).
+        wav = recordings.save_audio(b"RIFF----WAVEfmt ", 2.0)
+        recordings.note(wav, "ok", seconds=2.0, text="Dictée ajoutée après coup.")
+        window.refresh_button.click()
+        assert window.list_widget.count() == 1
+    finally:
+        window.deleteLater()
+
+
 def test_import_detail_shows_segments_and_renames(qapp, tmp_path: Path) -> None:
     source = _source(tmp_path)
     entry = library.add(_transcript(source), source)

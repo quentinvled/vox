@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QCursor, QDesktopServices
+from PySide6.QtGui import QColor, QCursor, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -213,10 +213,21 @@ class RecordingsWindow(QWidget):
         self.folder_button.clicked.connect(self._open_folder)
         header.addWidget(self.folder_button)
 
+        self.refresh_button = QPushButton("Actualiser")
+        self.refresh_button.setToolTip(
+            "Relire la liste depuis le disque (raccourci : F5)"
+        )
+        self.refresh_button.clicked.connect(self.refresh)
+        header.addWidget(self.refresh_button)
+
         self.settings_button = QPushButton("Réglages")
         self.settings_button.setToolTip("Ouvrir les réglages de Vox")
         self.settings_button.clicked.connect(self.settings_requested.emit)
         header.addWidget(self.settings_button)
+
+        # F5 : réflexe classique pour rafraîchir une liste.
+        shortcut = QShortcut(QKeySequence("F5"), self)
+        shortcut.activated.connect(self.refresh)
         return header
 
     def _build_progress(self) -> QFrame:
