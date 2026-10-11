@@ -7,6 +7,14 @@ Dictée vocale globale : maintiens **Ctrl + Maj**, parle, relâche — le texte
 s'écrit tout seul dans la fenêtre active. Disponible sur **Windows** et
 **Linux**.
 
+Pendant l'écoute, **Espace** bascule en **mode consigne** (la pilule passe du
+bleu au violet) : ta voix n'est plus retranscrite mais **exécutée** par le
+modèle — dis « écris un message poli pour dire que je suis désolé du retard,
+je m'en occupe demain » et le texte inséré est le message fini. Un texte copié
+(presse-papier) sert alors de matière à transformer : « rends ce texte plus
+concis » réécrit ce qui est dans le presse-papier. Un nouvel appui sur Espace
+revient à la dictée normale.
+
 Transcription via OpenRouter (Whisper, Qwen-ASR, Gemini…), nettoyage LLM
 actif par défaut (ton « Nettoyer », désactivable d'un clic dans la pilule),
 statistiques d'usage et historique audio local. Les fichiers importés (appels,

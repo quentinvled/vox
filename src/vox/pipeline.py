@@ -57,6 +57,7 @@ class Pipeline(QObject):
     transcript_ready = Signal(str, dict)
     finalized = Signal(str, dict)
     retranscribed = Signal(str, str)  # (nom du fichier audio, nouveau texte)
+    mode_changed = Signal(str)  # "dictation" | "instruction"
 
     def __init__(self, settings: Settings) -> None:
         super().__init__()
@@ -75,6 +76,9 @@ class Pipeline(QObject):
         self.last_meta: dict = {}
         self._recording = False
         self._busy = False
+        # "dictation" = la parole est transcrite ; "instruction" = la parole est
+        # une consigne executee par le modele de chat (voir toggle_mode).
+        self._mode = "dictation"
         self._last_injection_at = 0.0
         self._cached_client = None
         self._cached_signature: tuple | None = None
@@ -89,6 +93,23 @@ class Pipeline(QObject):
     @property
     def busy(self) -> bool:
         return self._busy
+
+    @property
+    def mode(self) -> str:
+        """Mode courant : « dictation » (transcrire) ou « instruction »."""
+        return self._mode
+
+    def set_mode(self, mode: str) -> None:
+        mode = "instruction" if mode == "instruction" else "dictation"
+        if mode == self._mode:
+            return
+        self._mode = mode
+        self.mode_changed.emit(mode)
+
+    def toggle_mode(self) -> str:
+        """Bascule dictée ⇄ consigne (Espace pendant l'écoute)."""
+        self.set_mode("instruction" if self._mode == "dictation" else "dictation")
+        return self._mode
 
     def apply_settings(self, settings: Settings) -> None:
         self.settings = settings
@@ -110,6 +131,8 @@ class Pipeline(QObject):
         except RecorderError as exc:
             self._fail(str(exc))
             return
+        # Chaque prise repart en dictée : la consigne est un geste ponctuel.
+        self.set_mode("dictation")
         self._recording = True
         self.recording_changed.emit(True)
         self.status_changed.emit("recording")
@@ -223,13 +246,25 @@ class Pipeline(QObject):
             "latency_ms": result.latency_ms,
             "language": result.language,
             "tone": None,
+            "mode": self._mode,
         }
         self.last_transcript = text
         self.last_meta = dict(meta)
         self.transcript_ready.emit(text, dict(meta))
 
         final = text
-        if self.settings.reword_enabled:
+        if self._mode == "instruction":
+            self.status_changed.emit("instructing")
+            final, instruct_meta = self._instruct(client, text)
+            meta.update(instruct_meta)
+            if not final:
+                # La consigne n'a pas pu etre executee : rien a inserer (le
+                # texte brut serait la consigne elle-meme, incompréhensible).
+                keep("erreur", "consigne non exécutée")
+                self._set_busy(False)
+                self.status_changed.emit("idle")
+                return
+        elif self.settings.reword_enabled:
             self.status_changed.emit("rewording")
             final, reword_meta = self._reword(client, text)
             meta.update(reword_meta)
@@ -292,6 +327,46 @@ class Pipeline(QObject):
             "chat_model": completion.model or self.settings.chat_model,
             "reword_cost": completion.cost,
             "reword_latency_ms": completion.latency_ms,
+        }
+
+    # Taille maximale du presse-papier envoyé comme contexte (en caractères) :
+    # au-delà, on n'envoie que le début plutôt que de payer un roman entier.
+    INSTRUCTION_CONTEXT_LIMIT = 6000
+
+    def _instruct(self, client: Client, command: str):
+        """Mode consigne : la parole est un ordre, exécuté par le modèle de chat.
+
+        Le presse-papier, s'il contient du texte, sert de matière à transformer ;
+        sinon le modèle rédige à partir de la seule consigne. Renvoie le texte
+        final (vide si la consigne a échoué).
+        """
+        context = ""
+        try:
+            context = (injector.get_clipboard_text() or "").strip()
+        except Exception:  # presse-papier indisponible : on continue sans contexte
+            context = ""
+        if len(context) > self.INSTRUCTION_CONTEXT_LIMIT:
+            context = context[: self.INSTRUCTION_CONTEXT_LIMIT]
+        try:
+            completion = client.chat(
+                reword.instruction_messages(
+                    command, context, self.settings.vocabulary_prompt
+                ),
+                self.settings.chat_model,
+            )
+        except Exception as exc:
+            self._notify("error", f"Consigne non exécutée ({exc}).")
+            return "", {"mode": "instruction"}
+        cleaned = _strip_wrapping(completion.text)
+        if not cleaned:
+            self._notify("info", "La consigne n'a rien produit.")
+            return "", {"mode": "instruction"}
+        return cleaned, {
+            "mode": "instruction",
+            "chat_model": completion.model or self.settings.chat_model,
+            "instruct_cost": completion.cost,
+            "instruct_latency_ms": completion.latency_ms,
+            "context_chars": len(context),
         }
 
     def _inject(self, text: str) -> None:

@@ -90,6 +90,8 @@ class Settings:
     hotkey: str = "ctrl+shift"
     hotkey_mode: str = "push_to_talk"  # push_to_talk | toggle
     double_tap_enter: bool = False
+    # Pendant l'ecoute, Espace bascule entre dictee et consigne (voir Pipeline).
+    instruction_enabled: bool = True
 
     # --- Audio ---
     input_device: int | None = None

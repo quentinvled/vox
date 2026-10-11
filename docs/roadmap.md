@@ -99,6 +99,7 @@ clic, puis le non-déclenchement sur un simple enregistreur vocal.
 
 | Étape | Contenu | État |
 |---|---|---|
+| 4.0 | **Mode consigne** : Espace pendant l'écoute bascule dictée ⇄ consigne (parole exécutée par le LLM, presse-papier en contexte, pilule violette) | [x] |
 | 4.1 | Transcription live par tranches de 3-8 s (VAD) | [ ] |
 | 4.2 | Sous-titres flottants pendant l'appel | [ ] |
 | 4.3 | Agent au raccourci (« qu'est-ce que je réponds ? ») sur buffer glissant | [ ] |
@@ -118,6 +119,18 @@ l'agent.
 
 ## Journal
 
+- **11/10/2026 (mode consigne)** — étape 4.0 : pendant l'écoute, **Espace**
+  bascule entre dictée et **consigne** (sans raccourci supplémentaire, dans les
+  deux modes push-to-talk et bascule). En mode consigne, la parole est un ordre
+  exécuté par le modèle de chat (`reword.instruction_messages`) au lieu d'être
+  transcrite ; le **presse-papier**, s'il contient du texte, sert de matière à
+  transformer (borné à 6 000 caractères). Retour visuel net : la pilule passe du
+  bleu au violet, titre « ✦ Consigne », sous-titre « Espace : dictée », et un
+  signal sonore discret confirme la bascule. Sur Windows, l'Espace est **avalé**
+  pendant l'écoute (aucun caractère parasite) et détecté par la scrutation
+  `GetAsyncKeyState` ; ailleurs on se contente de l'écouter. Réglage
+  `instruction_enabled` (coché par défaut) dans Réglages → Déclenchement.
+  Échec du modèle = rien n'est inséré (jamais la consigne brute). 156 tests.
 - **02/10/2026 (appels robustes)** — deux corrections issues du premier test
   réel :
   * **Diarisation adaptative** : quand le son du système est muet (téléphone

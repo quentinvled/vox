@@ -389,6 +389,18 @@ class SettingsWindow(QDialog):
         )
         trigger_form.addRow("", self.enter_check)
 
+        self.instruction_check = QCheckBox(
+            "Bascule dictée / consigne avec la touche Espace"
+        )
+        self.instruction_check.setToolTip(
+            "Pendant l'écoute, Espace bascule entre dicter (transcrire ta voix) et "
+            "consigne (ta voix devient un ordre exécuté par le modèle : « écris un "
+            "message poli pour dire que je suis désolé »). Un texte copié est alors "
+            "repris comme matière à transformer. La pilule passe du bleu au violet "
+            "pour montrer le mode, et un nouvel appui sur Espace revient à la dictée."
+        )
+        trigger_form.addRow("", self.instruction_check)
+
         self.autostart_check = QCheckBox("Lancer Vox au démarrage de la session")
         trigger_form.addRow("", self.autostart_check)
 
@@ -1356,6 +1368,7 @@ class SettingsWindow(QDialog):
             self.custom_hotkey = settings.hotkey or "ctrl+shift"
         self._sync_hotkey_state()
         self.enter_check.setChecked(settings.double_tap_enter)
+        self.instruction_check.setChecked(settings.instruction_enabled)
         self.autostart_check.setChecked(settings.autostart)
         self.manifest_edit.setText(settings.update_manifest_url)
 
@@ -1449,6 +1462,7 @@ class SettingsWindow(QDialog):
             hotkey=self._selected_hotkey(),
             hotkey_mode=self.hotkey_mode_combo.currentData(),
             double_tap_enter=self.enter_check.isChecked(),
+            instruction_enabled=self.instruction_check.isChecked(),
             autostart=self.autostart_check.isChecked(),
             update_manifest_url=self.manifest_edit.text().strip(),
             input_device=self.device_combo.currentData(),

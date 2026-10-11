@@ -133,6 +133,14 @@ def app_qss(theme: str) -> str:
         border: 1px solid {c['border']};
         border-radius: 24px;
     }}
+    /* Mode consigne : la pilule passe du bleu au violet, impossible a manquer. */
+    QFrame#card[mode="instruction"] {{
+        background: rgba(47, 34, 80, 246);
+        border: 1px solid rgba(167, 139, 250, 150);
+    }}
+    QFrame#card[mode="instruction"] QLabel#overlayTitle {{
+        color: #c9b8ff;
+    }}
     QLabel#overlayTitle {{
         font-size: 15px;
         font-weight: 600;

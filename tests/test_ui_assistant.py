@@ -62,6 +62,34 @@ def test_overlay_opens_library(qapp) -> None:
         overlay.deleteLater()
 
 
+def test_overlay_shows_instruction_mode(qapp) -> None:
+    overlay = Overlay()
+    try:
+        overlay.set_state("recording", detail="0:03")
+        assert "Espace : consigne" in overlay._full_text
+
+        overlay.set_mode("instruction")
+        assert overlay.title.text().startswith("✦ Consigne")
+        assert overlay.card.property("mode") == "instruction"
+        assert "Espace : dictée" in overlay._full_text
+
+        overlay.set_mode("dictation")
+        assert not overlay.title.text().startswith("✦ Consigne")
+        assert overlay.card.property("mode") == "dictation"
+    finally:
+        overlay.deleteLater()
+
+
+def test_overlay_hides_space_hint_when_disabled(qapp) -> None:
+    overlay = Overlay()
+    try:
+        overlay.set_instruction_available(False)
+        overlay.set_state("recording", detail="0:03")
+        assert "Espace" not in overlay._full_text
+    finally:
+        overlay.deleteLater()
+
+
 def test_tray_import_action(qapp) -> None:
     tray = Tray(make_app_icon(), "Ctrl+Maj")
     try:

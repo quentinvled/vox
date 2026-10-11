@@ -105,3 +105,56 @@ def messages(raw_text: str, tone: str, custom: str = "", vocabulary: str = "") -
         {"role": "system", "content": system_prompt(tone, custom, vocabulary)},
         {"role": "user", "content": raw_text},
     ]
+
+
+# --- Mode consigne -------------------------------------------------------
+# Ici, la parole de l'utilisateur n'est pas un texte a retranscrire mais un
+# ordre a executer. Le resultat est insere au curseur, comme une dictee.
+
+INSTRUCTION_RULES = (
+    "Tu es un assistant de redaction. L'utilisateur te parle a la voix : sa "
+    "parole est une CONSIGNE, pas un texte a retranscrire. Execute la consigne "
+    "et renvoie UNIQUEMENT le resultat final, sans preambule, sans commentaire, "
+    "sans guillemets, sans bloc de code : il sera tape directement dans le champ "
+    "ou se trouve le curseur. Ecris dans la langue de la consigne, sauf si elle "
+    "en demande une autre. Si l'utilisateur se reprend ou precise sa demande, "
+    "tiens compte de la derniere version. N'invente aucun fait : s'il manque une "
+    "information indispensable, ecris une formule neutre a completer."
+)
+
+CONTEXT_RULES = (
+    "Un texte de contexte est fourni (le presse-papier de l'utilisateur). Il "
+    "est la MATIERE a travailler : applique la consigne a ce texte et renvoie "
+    "le texte transforme. Ne le recopie pas tel quel si la consigne demande une "
+    "transformation, ne discute pas le contexte."
+)
+
+
+def instruction_system_prompt(vocabulary: str = "") -> str:
+    prompt = f"{INSTRUCTION_RULES}\n\n{CONTEXT_RULES}"
+    if vocabulary and vocabulary.strip():
+        prompt += (
+            "\n\nVocabulaire de reference : ecris ces termes exactement avec "
+            "cette orthographe quand ils apparaissent, sans jamais les ajouter "
+            "s'ils sont absents.\n"
+            f"{vocabulary.strip()}"
+        )
+    return prompt
+
+
+def instruction_messages(command: str, context: str = "", vocabulary: str = "") -> list[dict]:
+    """Messages pour le mode consigne.
+
+    `context` (presse-papier) est optionnel : sans lui, le modele redige a
+    partir de la seule consigne.
+    """
+    user = f"Consigne :\n{command.strip()}"
+    if context and context.strip():
+        user += (
+            "\n\nTexte de contexte (presse-papier) :\n<<<\n"
+            f"{context.strip()}\n>>>"
+        )
+    return [
+        {"role": "system", "content": instruction_system_prompt(vocabulary)},
+        {"role": "user", "content": user},
+    ]

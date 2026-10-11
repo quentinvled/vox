@@ -101,6 +101,8 @@ _SOUNDS: dict[str, bytes] = {
     "done": _render([(880.00, 0.080, 12.0, 0.72), (1174.66, 0.150, 9.0, 0.58)]),
     # Grave et descendant : « il y a un probleme ».
     "error": _render([(311.13, 0.130, 11.0, 0.95), (246.94, 0.210, 8.0, 0.75)]),
+    # Deux notes claires et courtes : « changement de mode » (dictée ⇄ consigne).
+    "mode": _render([(587.33, 0.060, 14.0, 0.70), (880.00, 0.090, 12.0, 0.62)]),
 }
 
 _files: dict[str, str] = {}

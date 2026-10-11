@@ -26,6 +26,11 @@ log = logging.getLogger("vox")
 EVENT_START = "start"
 EVENT_STOP = "stop"
 EVENT_CANCEL = "cancel"
+# Pendant l'ecoute : Espace bascule entre dictee et consigne (voir Pipeline).
+EVENT_MODE = "mode"
+
+# Code virtuel de la barre d'espace (scrutateur Windows).
+VK_SPACE = 0x20
 
 _CTRL = {"ctrl", "left ctrl", "right ctrl"}
 _SHIFT = {"shift", "left shift", "right shift"}
@@ -89,8 +94,9 @@ class _WindowsPoller:
         (0x5B, "left win"),
         (0x5C, "right win"),
     )
-    # Souris + modificateurs generiques : ignores lors de la detection de taint.
-    _IGNORED_VK = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x10, 0x11, 0x12}
+    # Souris + modificateurs generiques + Espace : ignores lors de la detection
+    # de taint (l'Espace pilote la bascule de mode, ce n'est pas une frappe).
+    _IGNORED_VK = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x10, 0x11, 0x12, VK_SPACE}
 
     def __init__(self, manager: "HotkeyManager") -> None:
         self._manager = manager
@@ -98,6 +104,7 @@ class _WindowsPoller:
         self._thread: threading.Thread | None = None
         self._modifier_vks = {vk for vk, _ in self._MODIFIERS}
         self._previous = {vk: False for vk in self._modifier_vks}
+        self._space_down = False
         self._warned = False
 
     def start(self) -> None:
@@ -140,6 +147,14 @@ class _WindowsPoller:
                 self._warned = True
                 log.info("Hook clavier silencieux : la scrutation prend le relais.")
             self._manager._handle(name, down)
+        # Espace : bascule dictée/consigne. Sur Windows, la touche est avalée
+        # pendant l'écoute (aucun caractère parasite) ; le hook la voit donc
+        # plus, et c'est cette scrutation qui la détecte.
+        if self._manager.armed:
+            down = self._down(VK_SPACE)
+            if down != self._space_down:
+                self._space_down = down
+                self._manager._on_space(down)
         if self._manager.combo_held and self._any_other_key_down():
             self._manager._mark_tainted()
 
@@ -186,6 +201,11 @@ class HotkeyManager:
         # Noms de touches deja vus : journalises une fois, pour diagnostiquer
         # une touche qui n'arrive jamais (touche Windows verrouillee, etc.).
         self._names_seen: set[str] = set()
+        # Bascule de mode (Espace pendant l'ecoute) : armee par l'application
+        # entre le debut et la fin de l'enregistrement.
+        self._armed = False
+        self._space_down = False
+        self._space_unblock = None
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -214,6 +234,56 @@ class HotkeyManager:
     def combo_held(self) -> bool:
         """Vrai pendant que la combinaison surveillee est maintenue."""
         return self._combo_down
+
+    @property
+    def armed(self) -> bool:
+        """Vrai pendant l'ecoute : l'Espace bascule alors le mode."""
+        return self._armed
+
+    def set_armed(self, armed: bool) -> None:
+        """Arme (debut d'ecoute) ou desarme (fin) la bascule Espace.
+
+        Sur Windows l'Espace est avale pendant l'ecoute pour ne pas inserer de
+        caractere parasite dans la fenetre active ; sur les autres systemes on
+        se contente de l'ecouter.
+        """
+        with self._lock:
+            if armed == self._armed:
+                return
+            self._armed = bool(armed)
+            self._space_down = False
+        self._sync_space_suppression(self._armed)
+
+    def _sync_space_suppression(self, armed: bool) -> None:
+        if sys.platform != "win32":
+            return
+        if armed:
+            if self._space_unblock is not None:
+                return
+            try:
+                import keyboard
+
+                self._space_unblock = keyboard.block_key("space")
+            except Exception as exc:  # pragma: no cover - depend du systeme
+                log.info("Blocage de l'Espace indisponible : %s", exc)
+                self._space_unblock = None
+        elif self._space_unblock is not None:
+            unblock, self._space_unblock = self._space_unblock, None
+            with contextlib.suppress(Exception):
+                unblock()
+
+    def _on_space(self, down: bool) -> None:
+        """Espace appuye pendant l'ecoute : bascule le mode (une fois/appui)."""
+        if not self._armed:
+            return
+        with self._lock:
+            if down:
+                if self._space_down:
+                    return
+                self._space_down = True
+                self._emit(EVENT_MODE)
+            else:
+                self._space_down = False
 
     def _mark_tainted(self) -> None:
         """Invalide le tap en cours (une autre touche a ete pressee)."""
@@ -315,6 +385,7 @@ class HotkeyManager:
         self._handler = None
 
     def stop(self) -> None:
+        self.set_armed(False)
         if self._handler is not None:
             if sys.platform == "win32":
                 try:
@@ -361,6 +432,12 @@ class HotkeyManager:
             self._names_seen.add(lowered)
             if len(self._names_seen) <= 40:
                 log.info("Touche clavier detectee : %s", lowered)
+        if lowered == "space" and self._armed:
+            # Espace pendant l'ecoute : bascule de mode, et surtout pas une
+            # frappe « parasite » qui invaliderait le tap push-to-talk.
+            self._on_space(is_down)
+            return
+
         group = self._group_of(lowered)
 
         with self._lock:

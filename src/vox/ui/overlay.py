@@ -29,9 +29,13 @@ STATE_TITLES = {
     "recording": "J'écoute…",
     "transcribing": "Transcription…",
     "rewording": "Reformulation…",
+    "instructing": "Rédaction…",
     "done": "Texte inséré",
     "error": "Problème",
 }
+
+# Couleur de titre du mode consigne (violet), reprise dans `set_mode`.
+INSTRUCTION_TITLE_COLOR = "#c9b8ff"
 
 
 def _elide_px(widget: QWidget, text: str, budget: int) -> str:
@@ -67,7 +71,12 @@ class Overlay(QWidget):
 
         self._theme = "dark"
         self._state = "idle"
+        self._state_message = ""
+        self._state_detail = ""
+        self._state_title = ""
         self._tone = "clean"
+        self._mode = "dictation"
+        self._instruction_available = True
         self._call_recording = False
         self._drag_offset: QPoint | None = None
         self._hide_delay = 0
@@ -219,6 +228,32 @@ class Overlay(QWidget):
     def set_reword_enabled(self, enabled: bool) -> None:
         self.reword_chip.setChecked(enabled)
 
+    def set_instruction_available(self, available: bool) -> None:
+        """Dit si le mode consigne est actif (pour le rappel « Espace »)."""
+        self._instruction_available = bool(available)
+        if self._state == "recording":
+            self._render_state()
+
+    def set_mode(self, mode: str) -> None:
+        """Bascule visuelle dictée (bleu) ⇄ consigne (violet)."""
+        mode = "instruction" if mode == "instruction" else "dictation"
+        if mode == self._mode:
+            return
+        self._mode = mode
+        self._apply_mode_style()
+        self._render_state()
+
+    def _apply_mode_style(self) -> None:
+        self.card.setProperty("mode", self._mode)
+        self.card.style().unpolish(self.card)
+        self.card.style().polish(self.card)
+        self.card.update()
+        self.title.setStyleSheet(
+            f"color: {INSTRUCTION_TITLE_COLOR};"
+            if self._mode == "instruction"
+            else ""
+        )
+
     def set_call_recording(self, active: bool) -> None:
         """Mode « enregistrement d'appel » : bouton Stop, puces masquées.
 
@@ -235,15 +270,29 @@ class Overlay(QWidget):
         self, state: str, message: str = "", detail: str = "", title: str = ""
     ) -> None:
         self._state = state
+        self._state_message = message
+        self._state_detail = detail
+        self._state_title = title
+        self._render_state()
+
+    def _render_state(self) -> None:
+        state = self._state
+        message = self._state_message
+        detail = self._state_detail
+        busy = state in {"transcribing", "rewording", "instructing"}
+
         self.bars.setVisible(state == "recording")
-        self.spinner.setVisible(state in {"transcribing", "rewording"})
-        if state in {"transcribing", "rewording"}:
+        self.spinner.setVisible(busy)
+        if busy:
             self.spinner.start()
         else:
             self.spinner.stop()
-
         self.bars.set_active(state == "recording")
-        self.title.setText(title or STATE_TITLES.get(state, state))
+
+        label = self._state_title or STATE_TITLES.get(state, state)
+        if self._mode == "instruction":
+            label = f"✦ Consigne · {label}"
+        self.title.setText(label)
 
         wanted = "overlaySubtitleError" if state == "error" else "overlaySubtitle"
         if self.subtitle.objectName() != wanted:
@@ -252,8 +301,8 @@ class Overlay(QWidget):
             self.subtitle.style().polish(self.subtitle)
 
         if state == "recording":
-            self._set_subtitle(detail or "Ctrl + Maj pour arrêter")
-        elif state in {"transcribing", "rewording"}:
+            self._set_subtitle(self._recording_hint(detail))
+        elif busy:
             self._set_subtitle(detail or "Patientez…")
         elif state == "done":
             self._set_subtitle(message or detail)
@@ -261,6 +310,15 @@ class Overlay(QWidget):
             self._set_subtitle(message)
         else:
             self._set_subtitle(detail or "Ctrl + Maj pour dicter")
+
+    def _recording_hint(self, detail: str) -> str:
+        """Sous-titre d'écoute, avec le rappel de la bascule Espace."""
+        hint = detail or "Ctrl + Maj pour arrêter"
+        if not self._instruction_available:
+            return hint
+        if self._mode == "instruction":
+            return f"{hint}  ·  Espace : dictée"
+        return f"{hint}  ·  Espace : consigne"
 
     def _set_subtitle(self, text: str) -> None:
         self._full_text = text or ""
@@ -312,7 +370,7 @@ class Overlay(QWidget):
         self._menu.exec(self.model_chip.mapToGlobal(QPoint(0, self.model_chip.height())))
 
     def _auto_hide(self) -> None:
-        if self._state in {"recording", "transcribing", "rewording"}:
+        if self._state in {"recording", "transcribing", "rewording", "instructing"}:
             return
         self.hide()
 

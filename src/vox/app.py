@@ -22,7 +22,7 @@ from . import config as config_module
 from .api import Client
 from .autostart import set_autostart
 from .config import HOTKEY_CHOICES, Settings
-from .hotkey import EVENT_CANCEL, EVENT_START, EVENT_STOP, HotkeyManager
+from .hotkey import EVENT_CANCEL, EVENT_MODE, EVENT_START, EVENT_STOP, HotkeyManager
 from .imports import (
     ImportCancelled,
     Progress,
@@ -434,6 +434,7 @@ class VoxApp(QObject):
             self.settings.double_tap_enter,
         )
         self.overlay = Overlay()
+        self.overlay.set_instruction_available(self.settings.instruction_enabled)
         self.tray = Tray(
             make_app_icon(),
             self.hotkey_label,
@@ -484,6 +485,7 @@ class VoxApp(QObject):
         self.overlay.moved.connect(self._on_overlay_moved)
 
         self.pipeline.recording_changed.connect(self._on_recording_changed)
+        self.pipeline.mode_changed.connect(self.overlay.set_mode)
         self.pipeline.status_changed.connect(self._on_status_changed)
         self.pipeline.notice.connect(self._on_notice)
         self.pipeline.finalized.connect(self._on_finalized)
@@ -703,8 +705,18 @@ class VoxApp(QObject):
                 ):
                     self._pending_enter = True
                 self.pipeline.stop_recording()
+            elif event == EVENT_MODE:
+                self._toggle_mode()
             elif event == EVENT_CANCEL:
                 self.pipeline.cancel_recording()
+
+    def _toggle_mode(self) -> None:
+        """Espace pendant l'ecoute : bascule dictee ⇄ consigne."""
+        if not self.pipeline.recording:
+            return
+        self.pipeline.toggle_mode()
+        if self.settings.sounds:
+            sounds.play("mode")
 
     # ------------------------------------------------------------------
     # Etats
@@ -721,6 +733,9 @@ class VoxApp(QObject):
             self.overlay.show_pill()
 
     def _on_recording_changed(self, recording: bool) -> None:
+        # Arme la bascule Espace (dictée ⇄ consigne) le temps de l'écoute, et la
+        # désarme avant la transcription (l'Espace sera alors libre pour le texte).
+        self.hotkey.set_armed(recording and self.settings.instruction_enabled)
         if recording:
             self._recording_started_at = time.monotonic()
             self.overlay.show_pill()
@@ -749,6 +764,10 @@ class VoxApp(QObject):
         elif state == "rewording":
             self.overlay.set_state("rewording", detail="Patientez…")
             self.tray.set_status("Reformulation…")
+            self._show_progress()
+        elif state == "instructing":
+            self.overlay.set_state("instructing", detail="J'exécute la consigne…")
+            self.tray.set_status("Consigne…")
             self._show_progress()
         elif state == "done":
             self.tray.set_status("Prêt")
@@ -1663,6 +1682,7 @@ class VoxApp(QObject):
             self.set_taskbar_mode(settings.show_in_taskbar)
 
         self.overlay.restore_position(settings.overlay_position)
+        self.overlay.set_instruction_available(settings.instruction_enabled)
         self._refresh_model_views()
         if self._stats_window is not None:
             # Le tableau de bord garde une reference aux reglages : on la met a
