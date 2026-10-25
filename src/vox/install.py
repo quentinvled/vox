@@ -3,7 +3,9 @@
 Sous Windows : installation dans %LOCALAPPDATA%\\Programs\\Vox, raccourcis,
 entree de desinstallation dans le registre. Sous Linux, l'application est
 distribuee en AppImage (fichier unique) : il n'y a rien a copier, seule la
-gestion du demarrage automatique et des donnees s'applique.
+gestion du demarrage automatique et des donnees s'applique. Sous macOS, Vox est
+un simple `Vox.app` que l'on glisse dans « Applications » : la desinstallation
+se limite au demarrage automatique et aux donnees.
 
 Volontairement limite a la bibliotheque standard : ce module est importe par
 l'installeur, qui ne doit surtout pas embarquer Qt ni quoi que ce soit de
@@ -354,10 +356,39 @@ IDYES = 6
 
 
 def message_box(text: str, title: str = "Vox", flags: int = MB_OK) -> int:
+    if sys.platform == "darwin":
+        return _macos_message_box(text, title, flags)
     try:
         return int(ctypes.windll.user32.MessageBoxW(None, text, title, flags))
     except Exception:
         return 0
+
+
+def _applescript_string(text: str) -> str:
+    """Litteral AppleScript sur, pour un texte venu de l'utilisateur."""
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _macos_message_box(text: str, title: str, flags: int) -> int:
+    """Boite de dialogue native macOS (osascript), sans dependance a Qt."""
+    buttons = '{"Non", "Oui"}' if flags & MB_YESNO else '{"OK"}'
+    script = (
+        f"display dialog {_applescript_string(text)} "
+        f"with title {_applescript_string(title)} "
+        f"buttons {buttons} default button 1"
+    )
+    try:
+        result = subprocess.run(  # noqa: S603 - argument unique, sans shell
+            ["/usr/bin/osascript", "-e", script],
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    if result.returncode != 0:
+        return 0
+    return IDYES if "Oui" in result.stdout.decode("utf-8", errors="replace") else 0
 
 
 # ----------------------------------------------------------------------
@@ -479,7 +510,10 @@ def _uninstall_unix(silent: bool = False) -> int:
     print("Vox a ete desinstalle.")
     if not remove_data and history.exists():
         print(f"Ton historique est conserve dans : {history}")
-    print("Pense a supprimer le fichier de l'application (AppImage) si besoin.")
+    if sys.platform == "darwin":
+        print("Pense a glisser Vox.app dans la corbeille si besoin.")
+    else:
+        print("Pense a supprimer le fichier de l'application (AppImage) si besoin.")
     return 0
 
 

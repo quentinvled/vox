@@ -119,6 +119,14 @@ l'agent.
 
 ## Journal
 
+- **25/10/2026 (macOS)** — portage complet : `injector_mac` (pynput/Quartz,
+  `pbcopy`/`pbpaste`, application active via AppKit ou `lsappinfo`), LaunchAgent
+  pour le démarrage automatique, ⌘V par défaut, bloc d'autorisations
+  (Accessibilité, Surveillance de la saisie) dans l'onglet **Sortie**,
+  mise à jour du bundle `.app` (ditto + retrait de la quarantaine), et
+  `tools/build_macos.py` qui produit `Vox.app`, `.zip` et `.dmg` ; job CI
+  `macos-14` et manifeste multi-plateforme. Le son du système reste hors
+  portée sans BlackHole (les appels enregistrent le micro seul).
 - **11/10/2026 (insertion confirmée)** — la pilule ne se masque plus avant
   d'être **sûr** que le texte est parti : elle reste visible pendant la
   transcription/le traitement, puis compare la **fenêtre active** juste après

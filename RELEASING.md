@@ -21,11 +21,13 @@ GitHub Actions (.github/workflows/release.yml)
         │  job « verify »   : le tag correspond bien a __version__
         │  job « windows »  : Vox.exe + l'installeur (windows-latest)
         │  job « linux »    : binaire + AppImage (ubuntu-latest)
+        │  job « macos »    : Vox.app + .zip + .dmg (macos-14, arm64)
         │  job « release »  : manifeste multi-plateforme + release GitHub
         ▼
 Release GitHub v0.2.0
         │  assets : Vox-Setup-0.2.0.exe (+ .sha256)
         │           Vox-0.2.0-x86_64.AppImage (+ .sha256)
+        │           Vox-0.2.0-macos-arm64.zip et .dmg (+ .sha256)
         │           version.json
         ▼
 L'application interroge l'URL stable :
@@ -72,10 +74,15 @@ uv run python tools/build_installer.py --rebuild
 uv run python tools/build_appimage.py
 # -> dist-share/Vox-<version>-x86_64.AppImage (+ .sha256)
 
+# macOS, sur un Mac (Apple Silicon) :
+uv run python tools/build_macos.py
+# -> dist-share/Vox-<version>-macos-arm64.zip et .dmg (+ .sha256)
+
 uv run python tools/make_manifest.py \
   --version <version> \
   --windows https://github.com/quentinvled/vox/releases/download/v<version>/Vox-Setup-<version>.exe \
   --linux https://github.com/quentinvled/vox/releases/download/v<version>/Vox-<version>-x86_64.AppImage \
+  --macos https://github.com/quentinvled/vox/releases/download/v<version>/Vox-<version>-macos-arm64.zip \
   --notes "Ce qui change" \
   --out dist-share/version.json
 # puis creer la release et y joindre tous ces fichiers.
@@ -90,6 +97,20 @@ aucun secret (le `.env` est ignore par git, les cles ne vivent que dans
 `%LOCALAPPDATA%\Vox\settings.json` ou `~/.local/share/Vox/settings.json`).
 Seule donnee personnelle exposee : l'adresse e-mail de l'auteur, presente dans
 l'historique des commits.
+
+## Avertissement macOS (Gatekeeper)
+
+L'application n'est pas signee ni notarisee : au premier lancement, macOS
+affiche « Vox ne peut pas etre ouvert car il ne provient pas d'un developpeur
+identifie ». L'utilisateur fait un clic droit sur Vox → **Ouvrir** → **Ouvrir
+quand meme**. Il doit ensuite autoriser **Accessibilite** et **Surveillance de
+la saisie** dans Reglages Systeme → Confidentialite et securite, puis relancer
+Vox. Ces autorisations sont rattachees a la signature de l'application : une
+mise a jour peut les faire redemander.
+
+Pour supprimer ces avertissements, il faut un compte Apple Developer (99 $/an)
+et une signature Developer ID + notarisation. A prevoir si l'audience macOS
+grandit.
 
 ## Avertissement Windows (SmartScreen)
 

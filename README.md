@@ -4,8 +4,8 @@
 [![Dernière version](https://img.shields.io/github/v/release/quentinvled/vox)](https://github.com/quentinvled/vox/releases/latest)
 
 Dictée vocale globale : maintiens **Ctrl + Maj**, parle, relâche — le texte
-s'écrit tout seul dans la fenêtre active. Disponible sur **Windows** et
-**Linux**.
+s'écrit tout seul dans la fenêtre active. Disponible sur **Windows**, **macOS**
+(Apple Silicon) et **Linux**.
 
 Pendant l'écoute, **Espace** bascule en **mode consigne** (la pilule passe du
 bleu au violet) : ta voix n'est plus retranscrite mais **exécutée** par le
@@ -62,6 +62,29 @@ Ouvre la page des versions :
 
    (Double-clic possible aussi, selon ton bureau.)
 
+### macOS
+
+1. Télécharge **`Vox-<version>-macos-arm64.dmg`** (Mac Apple Silicon, M1 et
+   suivants).
+2. Ouvre le `.dmg`, glisse **Vox** dans le dossier **Applications**.
+3. Au premier lancement, macOS affiche « Vox ne peut pas être ouvert car il ne
+   provient pas d'un développeur identifié » (l'application n'est pas signée) :
+   clic droit sur Vox → **Ouvrir**, puis **Ouvrir quand même**. Une seule fois.
+4. Vox apparaît dans la **barre des menus**, en haut à droite (pas de Dock).
+5. Accorde les deux autorisations demandées dans
+   **Réglages Système → Confidentialité et sécurité** :
+   - **Accessibilité** — pour écrire le texte dans les autres applications ;
+   - **Surveillance de la saisie** — pour entendre le raccourci clavier.
+
+   Sans elles, Vox se lance mais n'écrit rien. Relance Vox après les avoir
+   accordées. La section **« Autorisations macOS »** de l'onglet **Sortie**
+   rappelle leur état et ouvre directement le bon panneau.
+
+Le son du système (enregistrement d'appel) n'est pas captable nativement sous
+macOS : il faudrait installer un pilote de boucle comme
+[BlackHole](https://existential.audio/blackhole/). La dictée, elle, n'en a pas
+besoin.
+
 Si le lancement échoue avec un message sur `libfuse.so.2` (Ubuntu 24.04 et
 suivants ne l'installent plus par défaut), deux solutions :
 
@@ -86,7 +109,7 @@ l'intégrité du téléchargement.
 ## Premier lancement
 
 1. Une petite icône apparaît près de l'horloge (sur Windows, derrière le
-   chevron `^`).
+   chevron `^` ; sur macOS, dans la barre des menus en haut à droite).
 2. Ouvre les réglages (clic droit sur l'icône → **Réglages**).
 3. Colle une **clé OpenRouter** (à créer sur
    [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys), après
@@ -106,6 +129,9 @@ Téléchargements), l'installe et redémarre. Rien ne s'exécute sans ton clic.
 ## Désinstaller
 
 - **Windows** : Paramètres → Applications → Vox → Désinstaller.
+- **macOS** : glisse **Vox** de *Applications* à la corbeille, puis
+  `/Applications/Vox.app/Contents/MacOS/Vox --uninstall` pour retirer le
+  démarrage automatique et, si tu le souhaites, tes données.
 - **Linux** : supprime simplement l'AppImage, puis
   `./Vox-*.AppImage --uninstall` pour retirer le démarrage automatique et,
   si tu le souhaites, tes données.
@@ -115,6 +141,7 @@ Téléchargements), l'installe et redémarre. Rien ne s'exécute sans ton clic.
 Tout est local :
 
 - Windows : `%LOCALAPPDATA%\Vox`
+- macOS : `~/Library/Application Support/Vox`
 - Linux : `~/.local/share/Vox`
 
 Seul l'audio de chaque dictée est envoyé au service de transcription choisi,
@@ -144,6 +171,7 @@ Construire les paquets :
 ```bash
 uv run python tools/build_installer.py --rebuild   # Windows : Vox-Setup-<version>.exe
 uv run python tools/build_appimage.py              # Linux   : Vox-<version>-x86_64.AppImage
+uv run python tools/build_macos.py                 # macOS   : Vox.app + .zip + .dmg
 ```
 
 Publier une version (voir [`RELEASING.md`](RELEASING.md)) :

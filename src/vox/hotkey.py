@@ -2,10 +2,11 @@
 
 Ctrl+Maj seul n'est pas declarable via RegisterHotKey (il faut une touche
 reelle). Sous Windows on passe donc par `keyboard` (WH_KEYBOARD_LL) ; sous
-Linux, `pynput` ecoute les evenements X11 sans privilege particulier. Dans les
-deux cas on reconstruit la logique « tap » nous-memes, avec annulation si une
-autre touche est pressee pendant que la combinaison est maintenue (pour ne pas
-confondre avec Ctrl+Maj+Echap, Ctrl+Maj+T, etc.).
+macOS et Linux, `pynput` ecoute les evenements du systeme (Quartz / X11) sans
+privilege particulier — macOS demande seulement l'autorisation « Surveillance
+de la saisie ». Dans les trois cas on reconstruit la logique « tap » nous-memes,
+avec annulation si une autre touche est pressee pendant que la combinaison est
+maintenue (pour ne pas confondre avec Ctrl+Maj+Echap, Ctrl+Maj+T, etc.).
 
 Le module n'utilise volontairement aucune API Qt : les evenements sont
 pousses dans une file, consommee par le thread principal via un QTimer.
@@ -220,7 +221,7 @@ class HotkeyManager:
                 groups.add("shift")
             elif part in {"alt", "menu"}:
                 groups.add("alt")
-            elif part in {"win", "windows", "super"}:
+            elif part in {"win", "windows", "super", "cmd", "command", "meta"}:
                 groups.add("win")
         if not groups:
             groups = {"ctrl", "shift"}
@@ -376,7 +377,7 @@ class HotkeyManager:
                 listener.start()
                 self._handler = listener
                 self._error = None
-                log.info("Ecoute clavier X11 (pynput) installee.")
+                log.info("Ecoute clavier (pynput) installee.")
                 return
             except Exception as exc:  # pragma: no cover - depend du systeme
                 last = exc

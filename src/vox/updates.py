@@ -111,13 +111,19 @@ def check(
         return None, "manifeste sans champ « version »"
 
     urls = payload.get("urls")
+    key = platform_key()
     selected = ""
     if isinstance(urls, dict):
-        selected = str(urls.get(platform_key()) or "").strip()
+        selected = str(urls.get(key) or "").strip()
+    # L'ancien champ « url » ne concerne que Windows : s'en servir pour macOS
+    # ou Linux ferait telecharger un .exe inutilisable.
+    fallback = str(payload.get("url") or "").strip() if key == "windows" else ""
+    if not (selected or fallback):
+        return None, f"aucun fichier publié pour « {key} »"
 
     info = UpdateInfo(
         version=version,
-        url=selected or str(payload.get("url") or "").strip(),
+        url=selected or fallback,
         notes=str(payload.get("notes") or "").strip(),
         published_at=str(payload.get("published_at") or "").strip(),
     )
@@ -243,8 +249,8 @@ def install(downloaded: Path) -> tuple[bool, str]:
     """Installe une mise a jour telechargee et relance Vox.
 
     Renvoie `(True, "")` quand l'application doit se fermer tout de suite : la
-    nouvelle version sera lancee des que ce processus aura disparu (Linux) ou
-    par l'installeur (Windows). Sinon `(False, raison)`.
+    nouvelle version sera lancee des que ce processus aura disparu (Linux,
+    macOS) ou par l'installeur (Windows). Sinon `(False, raison)`.
     """
     downloaded = Path(downloaded)
     if not downloaded.exists():
@@ -261,6 +267,9 @@ def install(downloaded: Path) -> tuple[bool, str]:
         except OSError as exc:
             return False, f"lancement de l'installeur impossible ({exc})"
         return True, ""
+
+    if sys.platform == "darwin":
+        return _install_macos(downloaded)
 
     appimage = os.environ.get("APPIMAGE", "")
     target = Path(appimage) if appimage else None
@@ -290,6 +299,87 @@ def install(downloaded: Path) -> tuple[bool, str]:
     )
 
 
+# ----------------------------------------------------------------------
+# macOS : remplacement du bundle .app
+# ----------------------------------------------------------------------
+def macos_bundle(executable: Path | None = None) -> Path | None:
+    """Bundle `.app` qui contient l'executable donne (None hors bundle)."""
+    path = Path(executable or sys.executable).resolve()
+    for parent in path.parents:
+        if parent.suffix == ".app":
+            return parent
+    return None
+
+
+def macos_update_script(pid: int, archive: Path, target: Path) -> str:
+    """Script shell : attend la fin de Vox, remplace le bundle, relance.
+
+    Le remplacement se fait **apres** l'arret du processus : macOS garde ouverts
+    les fichiers d'une application qui tourne, et un `ditto` par-dessus un bundle
+    vivant laisse un melange des deux versions.
+    """
+    workdir = target.with_name(target.name + ".new")
+    old = target.with_name(target.name + ".old")
+    return (
+        "set -e\n"
+        f"WORK={shlex.quote(str(workdir))}\n"
+        f"OLD={shlex.quote(str(old))}\n"
+        f"TARGET={shlex.quote(str(target))}\n"
+        f"ARCHIVE={shlex.quote(str(archive))}\n"
+        "i=0\n"
+        f"while kill -0 {pid} 2>/dev/null; do\n"
+        "  i=$((i+1))\n"
+        "  if [ $i -gt 300 ]; then break; fi\n"
+        "  sleep 0.2\n"
+        "done\n"
+        'rm -rf "$WORK"\n'
+        'mkdir -p "$WORK"\n'
+        '/usr/bin/ditto -x -k "$ARCHIVE" "$WORK"\n'
+        'APP="$WORK/Vox.app"\n'
+        'if [ ! -d "$APP" ]; then\n'
+        '  APP="$(find "$WORK" -maxdepth 2 -name Vox.app -type d | head -1)"\n'
+        "fi\n"
+        'rm -rf "$OLD"\n'
+        'mv "$TARGET" "$OLD"\n'
+        '/usr/bin/ditto "$APP" "$TARGET"\n'
+        'rm -rf "$WORK" "$OLD" "$ARCHIVE"\n'
+        # Le telechargement est marque « en quarantaine » par le navigateur :
+        # sans ce retrait, Gatekeeper refuse de relancer une application non
+        # signee (« Vox est endommagé »).
+        '/usr/bin/xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null || true\n'
+        '/usr/bin/open "$TARGET"\n'
+    )
+
+
+def _install_macos(downloaded: Path) -> tuple[bool, str]:
+    target = macos_bundle()
+    if target is None:
+        return False, (
+            "Vox ne tourne pas depuis une application macOS (.app) : "
+            "télécharge la nouvelle version et ouvre-la à la main."
+        )
+    if downloaded.suffix.lower() != ".zip":
+        return False, (
+            "Cette mise à jour n'est pas une archive macOS (.zip) : "
+            "télécharge la nouvelle version depuis la page des versions."
+        )
+    if not os.access(target.parent, os.W_OK):
+        return False, (
+            f"Le dossier {target.parent} n'est pas modifiable par Vox. "
+            "Déplace Vox dans « Applications » de ton dossier personnel, "
+            "ou installe la mise à jour à la main."
+        )
+    try:
+        subprocess.Popen(  # noqa: S603 - script construit ici, sans entree externe
+            ["/bin/sh", "-c", macos_update_script(os.getpid(), downloaded, target)],
+            start_new_session=True,
+            close_fds=True,
+        )
+    except OSError as exc:
+        return False, f"lancement de la mise à jour impossible ({exc})"
+    return True, ""
+
+
 def manifest_example(version: str, url: str = "", notes: str = "") -> str:
     """Gabarit pret a publier (utile pour `vox --write-manifest`)."""
     from datetime import date
@@ -301,6 +391,7 @@ def manifest_example(version: str, url: str = "", notes: str = "") -> str:
         "urls": {
             "windows": windows,
             "linux": f"https://exemple.tld/vox/Vox-{version}-x86_64.AppImage",
+            "macos": f"https://exemple.tld/vox/Vox-{version}-macos-arm64.zip",
         },
         "notes": notes or "Decris ici ce qui change.",
         "published_at": date.today().isoformat(),

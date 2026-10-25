@@ -226,6 +226,7 @@ def test_active_audio_apps_is_empty_outside_windows(monkeypatch) -> None:
 def test_detect_returns_mic_then_system(monkeypatch) -> None:
     monkeypatch.setattr(sources, "mic_status", lambda device=None: _mic(True))
     monkeypatch.setattr(sources, "system_status", lambda: _system(False))
+    monkeypatch.setattr(sources, "SUPPORTS_SYSTEM_AUDIO", True)
     statuses = sources.detect()
     assert [status.kind for status in statuses] == ["mic", "system"]
     assert sources.status_dot(statuses) == "warn"
@@ -241,11 +242,20 @@ def _system(available: bool):
     )
 
 
-def test_status_dot_scenarios() -> None:
+def test_status_dot_scenarios(monkeypatch) -> None:
+    # On simule Windows : c'est la seule plateforme ou le son du systeme est
+    # cense etre disponible nativement.
+    monkeypatch.setattr(sources, "SUPPORTS_SYSTEM_AUDIO", True)
     assert sources.status_dot([_mic(True), _system(True)]) == "ok"
     assert sources.status_dot([_mic(True), _system(False)]) == "warn"
     assert sources.status_dot([_mic(False), _system(True)]) == "error"
     assert sources.status_dot([_mic(False), _system(False)]) == "error"
+
+
+def test_status_dot_sans_son_du_systeme_natif(monkeypatch) -> None:
+    """macOS et Linux : l'absence du son systeme n'est pas une anomalie."""
+    monkeypatch.setattr(sources, "SUPPORTS_SYSTEM_AUDIO", False)
+    assert sources.status_dot([_mic(True), _system(False)]) == "ok"
 
 
 def test_summary_mentions_active_sound() -> None:

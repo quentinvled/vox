@@ -11,5 +11,7 @@ dist-single/
 dist-share/
 dist-setup/
 dist-linux/
+dist-macos/
 release/*.exe
 release/*.AppImage
+release/*.dmg

@@ -32,6 +32,7 @@ def main() -> int:
     parser.add_argument("--url", default="", help="URL Windows (compatibilite)")
     parser.add_argument("--windows", default="", help="URL de l'installeur Windows")
     parser.add_argument("--linux", default="", help="URL de l'AppImage Linux")
+    parser.add_argument("--macos", default="", help="URL de l'archive macOS (.zip)")
     parser.add_argument("--notes", default="", help="nouveautes affichees aux utilisateurs")
     parser.add_argument("--out", default="release/version.json", help="fichier a ecrire")
     args = parser.parse_args()
@@ -44,12 +45,15 @@ def main() -> int:
 
     windows = args.windows.strip() or args.url.strip()
     linux = args.linux.strip()
+    macos = args.macos.strip()
 
     urls: dict[str, str] = {}
     if windows:
         urls["windows"] = windows
     if linux:
         urls["linux"] = linux
+    if macos:
+        urls["macos"] = macos
 
     payload = {
         "version": version,

@@ -53,6 +53,18 @@ if sys.platform == "win32":
         "comtypes",
         "psutil",
     ]
+elif sys.platform == "darwin":
+    # macOS : raccourci global, frappe et application active (Quartz/AppKit).
+    hiddenimports += [
+        "pynput",
+        "pynput.keyboard",
+        "pynput._util",
+        "pynput._util.darwin",
+        "Quartz",
+        "AppKit",
+        "objc",
+        "ApplicationServices",
+    ]
 else:
     # Linux : le raccourci global et la frappe passent par pynput (X11).
     hiddenimports += [

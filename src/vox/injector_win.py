@@ -256,6 +256,11 @@ def press_enter() -> None:
     _send([_key_event(vk=VK_RETURN), _key_event(vk=VK_RETURN, flags=KEYEVENTF_KEYUP)])
 
 
+def clipboard_available() -> bool:
+    """Le presse-papier Win32 est toujours disponible (pas d'outil externe)."""
+    return True
+
+
 def inject(text: str, method: str = "paste", paste_keys: str = "ctrl+v") -> None:
     if not text:
         return
@@ -289,6 +294,7 @@ def get_foreground_window_id() -> int:
 
 __all__ = [
     "InjectorError",
+    "clipboard_available",
     "get_clipboard_text",
     "get_foreground_window_id",
     "get_foreground_window_title",

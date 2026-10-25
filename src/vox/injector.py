@@ -4,6 +4,7 @@ Le module choisit l'implementation selon la plateforme, mais l'API publique est
 identique partout :
 
   * Windows -> `injector_win` : SendInput + presse-papier Win32 ;
+  * macOS   -> `injector_mac` : pynput (Quartz) + pbcopy/pbpaste ;
   * Linux   -> `injector_x11` : pynput + presse-papier du bureau.
 
 Les appelants (`pipeline`, `app`) n'ont donc rien a savoir du systeme.
@@ -16,6 +17,7 @@ import sys
 if sys.platform == "win32":
     from .injector_win import (
         InjectorError,
+        clipboard_available,
         get_clipboard_text,
         get_foreground_window_id,
         get_foreground_window_title,
@@ -27,9 +29,25 @@ if sys.platform == "win32":
     )
 
     BACKEND = "win32"
+elif sys.platform == "darwin":
+    from .injector_mac import (
+        InjectorError,
+        clipboard_available,
+        get_clipboard_text,
+        get_foreground_window_id,
+        get_foreground_window_title,
+        inject,
+        paste_text,
+        press_enter,
+        set_clipboard_text,
+        type_text,
+    )
+
+    BACKEND = "macos"
 else:
     from .injector_x11 import (
         InjectorError,
+        clipboard_available,
         get_clipboard_text,
         get_foreground_window_id,
         get_foreground_window_title,
@@ -45,6 +63,7 @@ else:
 __all__ = [
     "BACKEND",
     "InjectorError",
+    "clipboard_available",
     "get_clipboard_text",
     "get_foreground_window_id",
     "get_foreground_window_title",

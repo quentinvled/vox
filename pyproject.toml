@@ -10,7 +10,9 @@ dependencies = [
     "keyboard>=0.13.5; sys_platform == 'win32'",
     "numpy>=2.5.3",
     "pyside6>=6.11.2",
-    "pynput>=1.7.7; sys_platform == 'linux'",
+    # Raccourci global et frappe clavier : pynput sous Linux (X11) et macOS
+    # (Quartz). Sous Windows, c'est la bibliotheque `keyboard` qui sert.
+    "pynput>=1.7.7; sys_platform != 'win32'",
     "sounddevice>=0.5.6",
     # Son du systeme (WASAPI loopback) et applications qui jouent du son.
     "pycaw>=20240210; sys_platform == 'win32'",

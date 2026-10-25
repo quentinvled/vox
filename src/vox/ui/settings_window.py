@@ -31,9 +31,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__, audiofiles, library, recordings
+from .. import __version__, audiofiles, library, permissions, recordings
 from ..api import PROVIDERS, Client, diarizes_by_default
-from ..config import DEFAULT_DIARIZATION_MODEL, HOTKEY_CHOICES, HOTKEY_MODIFIERS, Settings
+from ..config import (
+    DEFAULT_DIARIZATION_MODEL,
+    DEFAULT_PASTE_KEYS,
+    HOTKEY_CHOICES,
+    HOTKEY_MODIFIERS,
+    Settings,
+)
 from ..models import Catalogue
 from ..models import label as model_label
 from ..recorder import list_input_devices
@@ -80,7 +86,12 @@ LANGUAGES: list[tuple[str, str]] = [
     ("uk", "Ukrainien"),
 ]
 
-PASTE_KEYS = ["ctrl+v", "ctrl+shift+v", "ctrl+alt+v", "shift+insert"]
+if sys.platform == "darwin":
+    # macOS : le collage standard est ⌘V. Ctrl+V reste proposé pour les
+    # applications qui utilisent encore les raccourcis Unix.
+    PASTE_KEYS = ["cmd+v", "cmd+shift+v", "cmd+alt+v", "ctrl+v"]
+else:
+    PASTE_KEYS = ["ctrl+v", "ctrl+shift+v", "ctrl+alt+v", "shift+insert"]
 
 # Correspondance touche Qt -> nom interne, pour la capture d'un raccourci.
 _QT_MODIFIERS: tuple[tuple[Qt.KeyboardModifier, str], ...] = (
@@ -226,6 +237,13 @@ class SettingsWindow(QDialog):
         self._wire()
 
     # ------------------------------------------------------------------
+    def showEvent(self, event) -> None:
+        """Rafraichit les autorisations macOS a chaque ouverture des reglages."""
+        super().showEvent(event)
+        if sys.platform == "darwin":
+            self._refresh_permissions()
+
+    # ------------------------------------------------------------------
     def _build(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -364,9 +382,10 @@ class SettingsWindow(QDialog):
         hotkey_row.setSpacing(6)
         hotkey_row.addWidget(self.hotkey_combo, 1)
         self.capture_button = QPushButton("Enregistrer…")
+        command = HOTKEY_MODIFIERS.get("win", "Windows")
         self.capture_button.setToolTip(
             "Clique puis appuie sur ta combinaison (au moins deux modificateurs "
-            "parmi Ctrl, Maj, Alt, Windows). Échap pour annuler."
+            f"parmi Ctrl, Maj, Alt, {command}). Échap pour annuler."
         )
         self.capture_button.clicked.connect(self._start_capture)
         hotkey_row.addWidget(self.capture_button)
@@ -523,7 +542,9 @@ class SettingsWindow(QDialog):
             "La pilule reste visible en permanence et obtient un bouton dans la "
             "barre des tâches, comme une application classique."
         )
-        ui_form.addRow("", self.taskbar_check)
+        if sys.platform != "darwin":
+            # Sur macOS, Vox vit dans la barre des menus : pas d'icône de Dock.
+            ui_form.addRow("", self.taskbar_check)
 
         outer.addWidget(ui_box)
 
@@ -570,6 +591,14 @@ class SettingsWindow(QDialog):
                 "icônes par défaut ; le menu « Où est mon icône ? » explique comment "
                 "l'épingler à côté de l'horloge. Si tu préfères une présence permanente "
                 "dans la barre des tâches, coche l'option ci-dessus."
+            )
+        elif sys.platform == "darwin":
+            tray_text = (
+                "Vox n'a pas de fenêtre principale : son icône vit dans la barre des "
+                "menus, en haut à droite de l'écran. Un clic sur l'icône ouvre le "
+                "menu (l'entrée « Afficher la pilule » y figure). Si l'icône est "
+                "masquée par la barre de menus d'un MacBook, réduis le nombre "
+                "d'icônes ou utilise « Bartender » pour la garder visible."
             )
         else:
             tray_text = (
@@ -623,11 +652,20 @@ class SettingsWindow(QDialog):
         outer.addWidget(box)
         outer.addWidget(note)
 
+        if sys.platform == "darwin":
+            outer.addWidget(self._build_macos_permissions())
+
         if sys.platform == "win32":
             warn_text = (
                 "Limite connue : dans une fenêtre élevée (UAC / administrateur), Windows "
                 "refuse l'insertion. Vox affiche alors une erreur et le texte reste "
                 "disponible via « Réinsérer le dernier texte »."
+            )
+        elif sys.platform == "darwin":
+            warn_text = (
+                "macOS refuse la simulation de frappe sans l'autorisation "
+                "« Accessibilité ». Si le texte n'apparaît pas, vérifie le bloc "
+                "ci-dessus : le texte reste disponible via « Réinsérer le dernier texte »."
             )
         else:
             warn_text = (
@@ -641,6 +679,65 @@ class SettingsWindow(QDialog):
         outer.addWidget(warn)
         outer.addStretch(1)
         return page
+
+    # ------------------------------------------------------------------
+    def _build_macos_permissions(self) -> QGroupBox:
+        """Autorisations macOS, avec acces direct aux Reglages Systeme."""
+        box = QGroupBox("Autorisations macOS")
+        layout = QVBoxLayout(box)
+        hint = QLabel(
+            "macOS demande ces autorisations application par application. Sans elles, "
+            "Vox se lance mais n'écrit rien et n'entend pas le raccourci. Après un "
+            "changement dans les Réglages Système, relance Vox."
+        )
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self._permission_labels: dict[str, QLabel] = {}
+        for item in permissions.statuses():
+            row = QHBoxLayout()
+            name = QLabel(item.label)
+            name.setMinimumWidth(190)
+            state = QLabel("")
+            self._permission_labels[item.key] = state
+            button = QPushButton("Ouvrir les réglages")
+            button.clicked.connect(
+                lambda _checked=False, key=item.key: permissions.open_settings(key)
+            )
+            row.addWidget(name)
+            row.addWidget(state, 1)
+            row.addWidget(button)
+            layout.addLayout(row)
+
+            detail = QLabel(item.detail)
+            detail.setObjectName("hint")
+            detail.setWordWrap(True)
+            layout.addWidget(detail)
+
+        refresh = QPushButton("Vérifier à nouveau")
+        refresh.clicked.connect(self._refresh_permissions)
+        layout.addWidget(refresh)
+        self._refresh_permissions()
+        return box
+
+    def _refresh_permissions(self) -> None:
+        """Relit l'etat des autorisations macOS et met les libelles a jour."""
+        labels = getattr(self, "_permission_labels", {})
+        for item in permissions.statuses():
+            label = labels.get(item.key)
+            if label is None:
+                continue
+            if item.granted is True:
+                label.setText("Autorisé")
+                label.setObjectName("success")
+            elif item.granted is False:
+                label.setText("Refusé")
+                label.setObjectName("error")
+            else:
+                label.setText("Inconnu")
+                label.setObjectName("hint")
+            label.style().polish(label)
 
     # ------------------------------------------------------------------
     def _build_reword(self) -> QWidget:
@@ -1482,7 +1579,7 @@ class SettingsWindow(QDialog):
             notify_on_start=self.notify_check.isChecked(),
             show_in_taskbar=self.taskbar_check.isChecked(),
             inject_method=self.method_combo.currentData(),
-            paste_keys=self.paste_combo.currentText().strip() or "ctrl+v",
+            paste_keys=self.paste_combo.currentText().strip() or DEFAULT_PASTE_KEYS,
             add_space=self.space_check.isChecked(),
             strip_short_period=self.short_period_check.isChecked(),
             reword_enabled=self.reword_check.isChecked(),

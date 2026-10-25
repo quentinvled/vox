@@ -28,6 +28,11 @@ log = logging.getLogger("vox")
 KIND_MIC = "mic"
 KIND_SYSTEM = "system"
 
+# Le son du système n'est captable nativement que sous Windows (WASAPI
+# loopback). Sous macOS il faudrait un pilote virtuel (BlackHole) ; sous Linux
+# une source PulseAudio « monitor ».
+SUPPORTS_SYSTEM_AUDIO = sys.platform == "win32"
+
 # Processus à ignorer dans la liste des applications qui jouent du son.
 _IGNORED_APPS = {
     "vox",
@@ -185,13 +190,20 @@ def active_audio_apps() -> tuple[str, ...]:
 
 
 def system_status() -> SourceStatus:
-    """Son du système : boucle WASAPI (Windows uniquement pour l'instant)."""
+    """Son du système : boucle WASAPI sous Windows, indisponible ailleurs."""
+    if sys.platform == "darwin":
+        return SourceStatus(
+            KIND_SYSTEM,
+            "Son du système",
+            available=False,
+            detail="macOS : nécessite BlackHole (périphérique de boucle)",
+        )
     if sys.platform != "win32":
         return SourceStatus(
             KIND_SYSTEM,
             "Son du système",
             available=False,
-            detail="Windows pour l'instant",
+            detail="Windows seulement",
         )
 
     info = wasapi_loopback()
@@ -225,7 +237,14 @@ def status_dot(statuses: list[SourceStatus]) -> str:
     """Pastille globale : tout est bon, il manque le système, ou rien."""
     if any(status.kind == KIND_MIC and not status.available for status in statuses):
         return "error"
-    if any(not status.available for status in statuses):
+    # Hors Windows, le son du système n'existe pas nativement : son absence ne
+    # doit pas allumer une alerte permanente dans la zone de notification.
+    relevant = [
+        status
+        for status in statuses
+        if status.kind != KIND_SYSTEM or SUPPORTS_SYSTEM_AUDIO
+    ]
+    if any(not status.available for status in relevant):
         return "warn"
     return "ok"
 

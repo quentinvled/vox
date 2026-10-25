@@ -17,7 +17,19 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QSystemTrayIcon
 
-from . import __version__, audiofiles, calls, injector, library, models, recordings, sounds, sources, updates
+from . import (
+    __version__,
+    audiofiles,
+    calls,
+    injector,
+    library,
+    models,
+    permissions,
+    recordings,
+    sounds,
+    sources,
+    updates,
+)
 from . import config as config_module
 from .api import Client
 from .autostart import set_autostart
@@ -575,10 +587,16 @@ class VoxApp(QObject):
         if first_run:
             self.settings.extras["greeted"] = True
             config_module.save(self.settings)
-            detail = (
-                "L'icône se trouve dans la zone de notification, derrière le "
-                "chevron ^ à gauche de l'horloge. Clic droit dessus pour le menu."
-            )
+            if sys.platform == "darwin":
+                detail = (
+                    "L'icône se trouve dans la barre des menus, en haut à droite. "
+                    "Un clic dessus ouvre le menu, avec « Afficher la pilule »."
+                )
+            else:
+                detail = (
+                    "L'icône se trouve dans la zone de notification, derrière le "
+                    "chevron ^ à gauche de l'horloge. Clic droit dessus pour le menu."
+                )
         else:
             detail = f"{self.hotkey_label} pour dicter."
         self.tray.showMessage(
@@ -587,6 +605,20 @@ class VoxApp(QObject):
             QSystemTrayIcon.Information,
             9000 if first_run else 4000,
         )
+        if first_run and sys.platform == "darwin":
+            # Les autorisations macOS se donnent ailleurs que dans Vox : sans ce
+            # rappel, l'application semble « ne rien faire » au premier essai.
+            message = permissions.summary()
+            if message:
+                QTimer.singleShot(
+                    1500,
+                    lambda: self.tray.showMessage(
+                        "Autorisations à accorder",
+                        message,
+                        QSystemTrayIcon.Warning,
+                        15000,
+                    ),
+                )
 
     def show_icon_help(self) -> None:
         """Aide a retrouver l'icone dans la zone de notification."""
@@ -600,6 +632,15 @@ class VoxApp(QObject):
                 15000,
             )
             QTimer.singleShot(400, lambda: QDesktopServices.openUrl(QUrl("ms-settings:taskbar")))
+        elif sys.platform == "darwin":
+            self.tray.showMessage(
+                "Où se trouve l'icône ?",
+                "L'icône de Vox est dans la barre des menus, en haut à droite de "
+                "l'écran. Si elle est masquée par d'autres icônes, réduis leur nombre "
+                "ou garde la barre déroulée avec « Bartender ».",
+                QSystemTrayIcon.Information,
+                15000,
+            )
         else:
             self.tray.showMessage(
                 "Où se trouve l'icône ?",

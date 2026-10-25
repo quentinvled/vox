@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
@@ -115,11 +117,22 @@ class Tray(QSystemTrayIcon):
         self.toggle_action.triggered.connect(self.toggle_requested.emit)
         self._menu.addAction(self.toggle_action)
 
-        self.call_action = QAction("Enregistrer un appel (micro + son système)…", self._menu)
-        self.call_action.setToolTip(
-            "Enregistre l'appel en deux pistes — toi et tes interlocuteurs — puis "
-            "le transcrit et le range dans la bibliothèque"
-        )
+        if sys.platform == "darwin":
+            # macOS n'a pas de boucle audio native : seul le micro est captable
+            # sans installer de pilote virtuel (BlackHole).
+            self.call_action = QAction("Enregistrer un appel (micro seul)…", self._menu)
+            self.call_action.setToolTip(
+                "Enregistre ta voix pendant l'appel puis la transcrit. Pour capter "
+                "aussi tes interlocuteurs, installe le pilote BlackHole."
+            )
+        else:
+            self.call_action = QAction(
+                "Enregistrer un appel (micro + son système)…", self._menu
+            )
+            self.call_action.setToolTip(
+                "Enregistre l'appel en deux pistes — toi et tes interlocuteurs — puis "
+                "le transcrit et le range dans la bibliothèque"
+            )
         self.call_action.triggered.connect(self.call_toggle_requested.emit)
         self._menu.addAction(self.call_action)
 
@@ -151,7 +164,9 @@ class Tray(QSystemTrayIcon):
         self.taskbar_action.setCheckable(True)
         self.taskbar_action.setChecked(self._show_in_taskbar)
         self.taskbar_action.toggled.connect(self.taskbar_toggled.emit)
-        display_menu.addAction(self.taskbar_action)
+        if sys.platform != "darwin":
+            # Sur macOS, l'icone vit dans la barre des menus (pas de Dock).
+            display_menu.addAction(self.taskbar_action)
 
         icon_help = QAction("Où est mon icône ?", display_menu)
         icon_help.triggered.connect(self.icon_help_requested.emit)

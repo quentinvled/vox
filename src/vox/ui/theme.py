@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QPainter, QPalette, QPen, QPixmap
 
@@ -119,13 +121,21 @@ def _check_icon_url() -> str:
     return path.as_posix()
 
 
+# Chaque systeme a sa police d'interface : celle de Windows n'existe pas sur
+# un Mac, et inversement.
+if sys.platform == "darwin":
+    _FONT_FAMILY = '"SF Pro Text", "Helvetica Neue", sans-serif'
+else:
+    _FONT_FAMILY = '"Segoe UI Variable Display", "Segoe UI", sans-serif'
+
+
 def app_qss(theme: str) -> str:
     c = palette(theme)
     check_icon = _check_icon_url()
     return f"""
     QWidget {{
         color: {c['text']};
-        font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+        font-family: {_FONT_FAMILY};
         font-size: 13px;
     }}
 

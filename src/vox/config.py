@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
@@ -54,22 +55,35 @@ KEY_FIELDS: dict[str, str] = {
 }
 
 # Raccourcis proposés dans l'UI -> (ctrl, shift, alt, win)
-HOTKEY_CHOICES: dict[str, str] = {
-    "ctrl+shift": "Ctrl + Maj",
-    "ctrl+alt": "Ctrl + Alt",
-    "ctrl+win": "Ctrl + Windows",
-    "alt+shift": "Alt + Maj",
-    "ctrl+alt+shift": "Ctrl + Alt + Maj",
-    "custom": "Personnalisé (enregistrer une combinaison)",
-}
-
-# Modificateurs acceptés dans une combinaison personnalisée.
-HOTKEY_MODIFIERS: dict[str, str] = {
+_MODIFIER_LABELS: dict[str, str] = {
     "ctrl": "Ctrl",
     "shift": "Maj",
     "alt": "Alt",
     "win": "Windows",
 }
+if sys.platform == "darwin":
+    # Sur macOS, la touche « Windows » des raccourcis est la touche Commande.
+    _MODIFIER_LABELS["win"] = "⌘"
+
+
+def _combo_label(combo: str) -> str:
+    return " + ".join(_MODIFIER_LABELS.get(part, part) for part in combo.split("+") if part)
+
+
+HOTKEY_CHOICES: dict[str, str] = {
+    "ctrl+shift": _combo_label("ctrl+shift"),
+    "ctrl+alt": _combo_label("ctrl+alt"),
+    "ctrl+win": _combo_label("ctrl+win"),
+    "alt+shift": _combo_label("alt+shift"),
+    "ctrl+alt+shift": _combo_label("ctrl+alt+shift"),
+    "custom": "Personnalisé (enregistrer une combinaison)",
+}
+
+# Modificateurs acceptés dans une combinaison personnalisée.
+HOTKEY_MODIFIERS: dict[str, str] = dict(_MODIFIER_LABELS)
+
+# Raccourci de collage par defaut : ⌘V sur macOS, Ctrl+V ailleurs.
+DEFAULT_PASTE_KEYS = "cmd+v" if sys.platform == "darwin" else "ctrl+v"
 
 
 @dataclass
@@ -104,7 +118,7 @@ class Settings:
 
     # --- Sortie ---
     inject_method: str = "paste"  # paste | type
-    paste_keys: str = "ctrl+v"
+    paste_keys: str = DEFAULT_PASTE_KEYS
     add_space: bool = True
     strip_short_period: bool = True
 
