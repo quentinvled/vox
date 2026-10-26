@@ -360,15 +360,26 @@ class Pipeline(QObject):
                 "info", f"Reformulation impossible, texte brut conservé ({exc})."
             )
             return text, {"tone": None}
-        cleaned = _strip_wrapping(completion.text)
-        if not cleaned:
-            return text, {"tone": None}
-        return cleaned, {
+        meta = {
             "tone": self.settings.reword_tone,
             "chat_model": completion.model or self.settings.chat_model,
             "reword_cost": completion.cost,
             "reword_latency_ms": completion.latency_ms,
         }
+        cleaned = self._checked_reword(text, completion.text)
+        if not cleaned:
+            return text, {**meta, "tone": None, "reword_rejected": True}
+        return cleaned, meta
+
+    def _checked_reword(self, source: str, candidate: str) -> str:
+        """Ne laisse pas une reponse evidente remplacer une question dictee."""
+        cleaned = _strip_wrapping(candidate)
+        if cleaned and not reword.preserves_question(source, cleaned):
+            self._notify(
+                "info", "Reformulation écartée : la question a disparu. Texte dicté conservé."
+            )
+            return ""
+        return cleaned
 
     # Taille maximale du presse-papier envoyé comme contexte (en caractères) :
     # au-delà, on n'envoie que le début plutôt que de payer un roman entier.
@@ -434,7 +445,7 @@ class Pipeline(QObject):
                     ),
                     self.settings.chat_model,
                 )
-                final = _strip_wrapping(completion.text) or text
+                final = self._checked_reword(text, completion.text) or text
                 self.last_final = final
                 try:
                     self._inject(final)

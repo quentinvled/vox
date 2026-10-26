@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -48,7 +49,7 @@ def test_pipeline_reword_cleans_by_default(qapp) -> None:
         assert meta["tone"] == "clean"
         assert meta["reword_cost"] == pytest.approx(0.0002)
         assert "hésitations" in client.messages[0]["content"]
-        assert client.messages[1]["content"].startswith("euh bonjour")
+        assert json.loads(client.messages[1]["content"])["transcription"].startswith("euh bonjour")
     finally:
         pipeline.shutdown()
 
@@ -185,5 +186,105 @@ def test_pipeline_reword_falls_back_to_raw_text(qapp) -> None:
         assert meta == {"tone": None}
         assert notices and notices[0][0] == "info"
         assert "texte brut conservé" in notices[0][1]
+    finally:
+        pipeline.shutdown()
+
+
+@pytest.mark.parametrize("answer", ["Non.", "Non, je n'ai pas accès à ton Drive."])
+def test_reword_keeps_drive_question_instead_of_an_answer(qapp, answer) -> None:
+    raw = "Est-ce que oui ou non tu as accès à mon drive ?"
+
+    class _Answering:
+        def chat(self, messages, model):
+            assert json.loads(messages[1]["content"])["transcription"] == raw
+            return api.Completion(text=answer, model=model, cost=0.0002, latency_ms=123)
+
+    pipeline = Pipeline(Settings())
+    notices = []
+    pipeline.notice.connect(lambda level, message: notices.append((level, message)))
+    try:
+        final, meta = pipeline._reword(_Answering(), raw)
+        assert final == raw
+        assert meta["tone"] is None
+        assert meta["reword_rejected"] is True
+        # L'appel a quand meme ete facture : son cout ne doit pas disparaitre.
+        assert meta["reword_cost"] == pytest.approx(0.0002)
+        assert notices and "Texte dicté conservé" in notices[0][1]
+    finally:
+        pipeline.shutdown()
+
+
+def test_reword_accepts_a_corrected_question(qapp) -> None:
+    class _Correcting:
+        def chat(self, messages, model):
+            return api.Completion(text="As-tu accès à mon Drive, oui ou non ?", model=model)
+
+    pipeline = Pipeline(Settings())
+    try:
+        final, meta = pipeline._reword(_Correcting(), "est-ce que oui ou non tu as acces à mon drive")
+        assert final == "As-tu accès à mon Drive, oui ou non ?"
+        assert meta["tone"] == "clean"
+        assert "reword_rejected" not in meta
+    finally:
+        pipeline.shutdown()
+
+
+def test_dictation_inserts_question_not_model_answer(qapp, monkeypatch) -> None:
+    raw = "Est-ce que oui ou non tu as accès à mon drive ?"
+
+    class _Client:
+        def transcribe(self, *_args, **_kwargs):
+            return api.Transcript(text=raw, model="transcription")
+
+        def chat(self, messages, model):
+            return api.Completion(text="Non, je n'ai pas accès à ton Drive.", model=model)
+
+    pipeline = Pipeline(Settings(sounds=False, history_enabled=False))
+    inserted = []
+    monkeypatch.setattr(pipeline, "_client", lambda: _Client())
+    monkeypatch.setattr(pipeline, "_inject", inserted.append)
+    try:
+        pipeline._transcribe(b"audio", 4.0)
+        assert inserted == [raw]
+        assert pipeline.last_transcript == raw
+        assert pipeline.last_final == raw
+        assert pipeline.last_meta["reword_rejected"] is True
+    finally:
+        pipeline.shutdown()
+
+
+def test_manual_reword_uses_the_same_question_protection(qapp, monkeypatch) -> None:
+    raw = "Est-ce que oui ou non tu as accès à mon drive ?"
+
+    class _Client:
+        def chat(self, messages, model):
+            return api.Completion(text="Non.", model=model)
+
+    pipeline = Pipeline(Settings())
+    inserted = []
+    monkeypatch.setattr(pipeline, "_client", lambda: _Client())
+    monkeypatch.setattr(pipeline, "_inject", inserted.append)
+    monkeypatch.setattr(pipeline.worker, "submit", lambda job: job())
+    try:
+        pipeline.reword_text(raw, "formal")
+        assert inserted == [raw]
+        assert pipeline.last_final == raw
+        assert not pipeline.busy
+    finally:
+        pipeline.shutdown()
+
+
+def test_instruction_mode_can_still_answer_a_question(qapp, monkeypatch) -> None:
+    class _Client:
+        def chat(self, messages, model):
+            assert "Consigne" in messages[1]["content"]
+            return api.Completion(text="Non.", model=model)
+
+    pipeline = Pipeline(Settings())
+    monkeypatch.setattr("vox.pipeline.injector.get_clipboard_text", lambda: "")
+    try:
+        final, meta = pipeline._instruct(_Client(), "Réponds non à cette question")
+        assert final == "Non."
+        assert meta["mode"] == "instruction"
     finally:
         pipeline.shutdown()
