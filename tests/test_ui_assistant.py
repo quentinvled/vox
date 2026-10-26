@@ -283,6 +283,33 @@ def _probe_120s(path):
     return audiofiles.AudioInfo(duration=120.0, channels=1, samplerate=16000, codec="aac")
 
 
+def test_settings_update_progress_and_failure_allow_retry(qapp) -> None:
+    from vox.config import Settings
+    from vox.updates import UpdateInfo
+
+    window = SettingsWindow(Settings(), models.fallback("openrouter"))
+    try:
+        window.show_update_available(UpdateInfo("99.0", "https://example.test/setup"))
+        window.show_progress(10, 100)
+        assert not window.check_button.isEnabled()
+        assert window.update_button.isHidden()
+        assert window.download_bar.value() == 10
+
+        window.show_waiting_to_install()
+        assert "traitement en cours" in window.update_status.text()
+        window.show_installing()
+        assert not window.download_bar.isHidden()
+        assert window.download_bar.value() == 100
+
+        window.show_download_error("verrouille")
+        assert window.check_button.isEnabled()
+        assert window.update_button.isEnabled()
+        assert not window.update_button.isHidden()
+        assert window.download_bar.isHidden()
+    finally:
+        window.deleteLater()
+
+
 def test_settings_import_tab_collects_files_and_options(qapp, monkeypatch, tmp_path) -> None:
     from vox.config import Settings
 

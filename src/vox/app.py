@@ -429,6 +429,7 @@ class VoxApp(QObject):
         self._update_checker: _UpdateChecker | None = None
         self._update_info: updates.UpdateInfo | None = None
         self._downloader: _UpdateDownloader | None = None
+        self._update_in_progress = False
         self._import_worker: _ImportWorker | None = None
         self._names_worker: _NamesWorker | None = None
         self._imported_ids: list[str] = []
@@ -958,6 +959,10 @@ class VoxApp(QObject):
 
     def check_updates(self, url: str | None = None, manual: bool = False) -> None:
         """Interroge le manifeste de version (silencieux en cas d'echec)."""
+        if self._update_in_progress:
+            return
+        if self._update_checker is not None and self._update_checker.isRunning():
+            return
         manifest = (url or self.settings.update_manifest_url or "").strip()
         window = self._settings_window
         if not manifest:
@@ -971,6 +976,8 @@ class VoxApp(QObject):
         self._update_checker.start()
 
     def _on_update_checked(self, info: updates.UpdateInfo | None, reason: str) -> None:
+        if self._update_in_progress:
+            return
         window = self._settings_window
         if info is None:
             log.info("Mise à jour : %s", reason)
@@ -1001,19 +1008,27 @@ class VoxApp(QObject):
     # ------------------------------------------------------------------
     def start_update(self) -> None:
         """Telecharge puis installe la mise a jour en un seul geste."""
+        if self._update_in_progress:
+            return
         info = self._update_info
         if info is None or not info.url:
             # Rien de connu pour l'instant : on verifie, l'utilisateur recliquera.
             self.check_updates(manual=True)
             return
 
-        destination = updates.cached_file(info.url, info.version)
-        if destination.exists() and destination.stat().st_size > 0:
-            log.info("Mise a jour deja telechargee : %s", destination)
-            self._install_update(destination)
+        self._update_in_progress = True
+        try:
+            destination = updates.cached_file(info.url, info.version)
+            cached = destination.exists() and destination.stat().st_size > 0
+            if not cached:
+                updates.cleanup()
+        except OSError as exc:
+            self._on_update_failed(str(exc))
             return
-
-        updates.cleanup()
+        if cached:
+            log.info("Mise a jour deja telechargee : %s", destination)
+            self._on_update_downloaded(destination)
+            return
         log.info("Telechargement de la mise a jour %s -> %s", info.url, destination)
         if self._settings_window is not None:
             self._settings_window.show_progress(0, 0)
@@ -1028,6 +1043,7 @@ class VoxApp(QObject):
             self._settings_window.show_progress(received, total)
 
     def _on_update_failed(self, message: str) -> None:
+        self._update_in_progress = False
         log.warning("Telechargement de la mise a jour impossible : %s", message)
         if self._settings_window is not None:
             self._settings_window.show_download_error(message)
@@ -1042,6 +1058,8 @@ class VoxApp(QObject):
         log.info("Mise a jour telechargee : %s", path)
         if self.pipeline.recording or self.pipeline.busy:
             # Ne jamais couper une dictee en cours : on repasse plus tard.
+            if self._settings_window is not None:
+                self._settings_window.show_waiting_to_install()
             QTimer.singleShot(4000, lambda: self._on_update_downloaded(path))
             return
         self._install_update(Path(path))
@@ -1056,6 +1074,7 @@ class VoxApp(QObject):
             self.quit()
             return
         log.warning("Installation impossible : %s", reason)
+        self._update_in_progress = False
         if self._settings_window is not None:
             self._settings_window.show_download_error(reason)
         self.tray.showMessage(

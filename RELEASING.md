@@ -42,6 +42,14 @@ L'application interroge l'URL stable :
 - La CI verifie que le tag correspond bien a `__version__` avant de construire.
 - Le manifeste contient un champ `urls` par systeme ; l'ancien champ `url`
   (Windows) est conserve pour la compatibilite.
+- Sous Windows, la mise a jour ouvre l'installeur avec `--update` : il demarre
+  automatiquement, montre sa progression et reste ouvert en cas d'erreur.
+  Les fichiers sont prepares a part avant remplacement, avec une attente bornee
+  si Windows verrouille encore l'ancien executable. Le detail reste dans
+  `%LOCALAPPDATA%\Vox\setup.log`.
+- Les anciennes versions utilisent encore `--silent` : pour profiter aussi de
+  la progression visible lors de la premiere mise a jour corrigee, lancer le
+  nouvel installeur manuellement. Les mises a jour suivantes seront visibles.
 
 ## Avant de publier
 

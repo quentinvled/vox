@@ -1403,6 +1403,7 @@ class SettingsWindow(QDialog):
         self._set_update_status(f"Vérification impossible : {reason}", "error")
 
     def show_progress(self, received: int, total: int) -> None:
+        self.check_button.setEnabled(False)
         self.update_button.setVisible(False)
         self.download_bar.setVisible(True)
         if total:
@@ -1418,7 +1419,15 @@ class SettingsWindow(QDialog):
             self.download_bar.setRange(0, 0)
             self._set_update_status(f"Téléchargement… {received / 1048576:.1f} Mo")
 
+    def show_waiting_to_install(self) -> None:
+        self.show_progress(1, 1)
+        self.download_bar.setFormat("Téléchargement terminé")
+        self._set_update_status("Téléchargement terminé. Installation à la fin du traitement en cours.")
+
     def show_installing(self) -> None:
+        self.check_button.setEnabled(False)
+        self.update_button.setVisible(False)
+        self.download_bar.setVisible(True)
         self.download_bar.setRange(0, 100)
         self.download_bar.setValue(100)
         self.download_bar.setFormat("Installation…")

@@ -69,6 +69,23 @@ jobs:
       - name: Construire Vox et l'installeur
         run: uv run python tools/build_installer.py --rebuild
 
+      - name: Verifier l'installation et la reinstallation Windows
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist-share/Vox-Setup-*.exe | Select-Object -First 1
+          foreach ($attempt in 1..2) {
+            $process = Start-Process -FilePath $installer.FullName -ArgumentList '--silent', '--no-launch' -Wait -PassThru
+            if ($process.ExitCode -ne 0) {
+              Get-Content "$env:LOCALAPPDATA/Vox/setup.log" -ErrorAction SilentlyContinue
+              throw "Installation $attempt en echec : code $($process.ExitCode)"
+            }
+          }
+          $expected = (Get-FileHash dist-single/Vox.exe -Algorithm SHA256).Hash
+          $installed = (Get-FileHash "$env:LOCALAPPDATA/Programs/Vox/Vox.exe" -Algorithm SHA256).Hash
+          if ($installed -ne $expected) {
+            throw "L'executable installe ne correspond pas a la nouvelle version"
+          }
+
       - name: Conserver les artefacts
         uses: actions/upload-artifact@v7
         with:

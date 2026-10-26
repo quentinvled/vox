@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 try:
@@ -57,6 +58,32 @@ def installed_exe() -> Path:
             return Path(sys.executable).resolve()
         return Path(shutil.which("vox") or sys.executable).resolve()
     return install_dir() / PROCESS_NAME
+
+
+def replace_file(source: Path, target: Path, timeout: float = 15.0) -> None:
+    """Prepare la copie puis remplace le fichier sans abimer l'ancien.
+
+    TerminateProcess est asynchrone : Windows peut encore verrouiller Vox.exe
+    apres stop_running(). On attend sa liberation, avec une limite, plutot que
+    de copier directement par-dessus l'executable installe.
+    """
+    with tempfile.NamedTemporaryFile(
+        dir=target.parent, prefix=f".{target.name}.", suffix=".new", delete=False
+    ) as handle:
+        temporary = Path(handle.name)
+    try:
+        shutil.copy2(source, temporary)
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                os.replace(temporary, target)
+                return
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.2)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def desktop_dir() -> Path:

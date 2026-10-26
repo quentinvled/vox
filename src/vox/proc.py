@@ -14,6 +14,7 @@ l'appel :
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -28,4 +29,13 @@ def no_window() -> dict:
     return {}
 
 
-__all__ = ["CREATE_NO_WINDOW", "no_window"]
+def independent_env() -> dict[str, str]:
+    """Environnement d'un programme qui doit survivre a celui qui le lance.
+
+    PyInstaller ne doit pas reutiliser les fichiers temporaires de l'ancienne
+    instance : ils disparaissent a sa fermeture.
+    """
+    return {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+
+
+__all__ = ["CREATE_NO_WINDOW", "independent_env", "no_window"]

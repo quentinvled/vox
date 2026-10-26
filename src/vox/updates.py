@@ -235,7 +235,7 @@ def _relaunch_later(target: Path) -> None:
     redemarrerait jamais. On attend donc la disparition de ce processus.
     """
     script = _relaunch_script(os.getpid(), target)
-    env = {key: value for key, value in os.environ.items() if key not in _APPIMAGE_ENV}
+    env = {key: value for key, value in proc.independent_env().items() if key not in _APPIMAGE_ENV}
     subprocess.Popen(  # noqa: S603
         ["/bin/sh", "-c", script],
         env=env,
@@ -257,11 +257,13 @@ def install(downloaded: Path) -> tuple[bool, str]:
         return False, "le fichier téléchargé est introuvable"
 
     if sys.platform == "win32":
-        # L'installeur ferme Vox, remplace les fichiers puis relance.
+        # Une fenetre montre l'installation et reste ouverte en cas d'echec.
+        # Le mode silencieux masquait toutes les erreurs apres la fermeture de Vox.
         try:
             subprocess.Popen(  # noqa: S603
-                [str(downloaded), "--silent"],
+                [str(downloaded), "--update"],
                 close_fds=True,
+                env=proc.independent_env(),
                 **proc.no_window(),
             )
         except OSError as exc:
@@ -374,6 +376,7 @@ def _install_macos(downloaded: Path) -> tuple[bool, str]:
             ["/bin/sh", "-c", macos_update_script(os.getpid(), downloaded, target)],
             start_new_session=True,
             close_fds=True,
+            env=proc.independent_env(),
         )
     except OSError as exc:
         return False, f"lancement de la mise à jour impossible ({exc})"

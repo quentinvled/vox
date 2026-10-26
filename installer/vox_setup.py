@@ -1,10 +1,11 @@
 """Installeur de Vox (tkinter), construit par PyInstaller.
 
-Deux modes :
+Modes :
   * graphique (par defaut) : fenetre d'installation pour tes amis ;
   * `--silent` : aucune interface, tout est journalise dans
     %LOCALAPPDATA%\\Vox\\setup.log. Pratique pour tester ou pour mettre a jour
     en script.
+  * `--update` : installation automatique avec progression et erreurs visibles.
 
 Aucun droit administrateur : tout est installe dans le profil de l'utilisateur.
 
@@ -30,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from vox import (
     __version__,
     install,
+    proc,
 )
 from vox.paths import data_dir
 
@@ -111,7 +113,7 @@ def run_steps(on_step: Callable[[int, str, str], None], launch: bool = True) -> 
     destination = install.install_dir()
     on_step(2, "Copie des fichiers…", str(destination))
     for name in PAYLOAD_FILES:
-        shutil.copy2(source / name, destination / name)
+        install.replace_file(source / name, destination / name)
         log.info("Copie : %s", name)
     for name in OPTIONAL_FILES:
         extra = source / name
@@ -136,7 +138,7 @@ def run_steps(on_step: Callable[[int, str, str], None], launch: bool = True) -> 
     if launch:
         on_step(5, "Lancement de Vox…", "Recherche de l'icône près de l'horloge")
         subprocess.Popen(  # noqa: S603 - chemin construit localement
-            [str(exe)], cwd=str(destination), close_fds=True
+            [str(exe)], cwd=str(destination), close_fds=True, env=proc.independent_env()
         )
         log.info("Vox lance")
     else:
@@ -167,13 +169,14 @@ def silent_main() -> int:
 class SetupApp:
     """Fenetre d'installation."""
 
-    def __init__(self) -> None:
+    def __init__(self, updating: bool = False) -> None:
         self.root = tk.Tk()
         self.root.title(f"Installation de Vox {__version__}")
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
         self.events: queue.Queue = queue.Queue()
         self._finished = False
+        self._updating = updating
 
         icon = asset("Vox.ico")
         if icon:
@@ -182,6 +185,8 @@ class SetupApp:
 
         self._build()
         self._autosize()
+        if updating:
+            self.root.after(100, self.start)
 
     def _autosize(self) -> None:
         """Dimensionne la fenetre sur son contenu.
@@ -356,6 +361,8 @@ class SetupApp:
             self.install_button.configure(state="normal", bg=ACCENT, text="Terminer")
             self.install_button.configure(command=self.root.destroy)
             self.quit_button.configure(state="normal", text="Fermer")
+            if self._updating:
+                self.root.after(1500, self.root.destroy)
 
     def _retry(self) -> None:
         self._finished = False
@@ -379,7 +386,7 @@ def main() -> int:
         return silent_main()
 
     log.info("Installeur Vox %s demarre (mode graphique)", __version__)
-    return SetupApp().run()
+    return SetupApp(updating="--update" in sys.argv).run()
 
 
 if __name__ == "__main__":
