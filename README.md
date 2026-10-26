@@ -138,6 +138,25 @@ clé reste indispensable pour transcrire ou reformuler.
 En cas de coupure, Vox garde la dernière liste enregistrée. L'onglet **Importer**
 reste lié aux modèles OpenRouter, même si la dictée utilise un autre fournisseur.
 
+## Où sont rangés les appels et les imports
+
+Les enregistrements d'appels et les transcriptions d'imports vivent dans un
+dossier dédié, visible depuis l'explorateur :
+
+- **Windows** : `Documents\Vox` (`Appels` pour les pistes audio,
+  `Imports` pour les transcriptions et l'index) ;
+- **macOS et Linux** : `~/Documents/Vox`, avec les mêmes sous-dossiers.
+
+Le chemin exact est affiché dans **Réglages → Général → Appels et imports**, avec
+le bouton **Ouvrir le dossier**. Les dictées, les réglages et les journaux restent
+dans le dossier de données de Vox (`%LOCALAPPDATA%\Vox` sous Windows).
+
+Au premier démarrage de cette version, les appels et imports déjà présents dans
+l'ancien dossier y sont déplacés automatiquement. L'ancien index de la
+bibliothèque est conservé en copie (`bibliotheque.jsonl.migre`) et aucun fichier
+n'est écrasé. Vox ne copie jamais le fichier audio d'origine d'un import : il
+reste là où tu l'as rangé ; seuls sa transcription et son index sont conservés.
+
 ## Mises à jour
 
 Vox vérifie les nouvelles versions au démarrage et deux fois par jour. Quand

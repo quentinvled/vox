@@ -55,21 +55,107 @@ def recordings_index_file() -> Path:
     return data_dir() / "enregistrements.jsonl"
 
 
+def documents_dir() -> Path:
+    """Dossier « Documents » de l'utilisateur, visible depuis l'explorateur.
+
+    Sous Windows on interroge le vrai dossier connu : il peut avoir ete
+    redirige vers OneDrive, et `~\\Documents` ne pointe alors pas au bon
+    endroit.
+    """
+    if sys.platform == "win32":
+        known = _windows_documents_dir()
+        if known is not None:
+            return known
+    candidate = Path.home() / "Documents"
+    return candidate if candidate.is_dir() else Path.home()
+
+
+def _windows_documents_dir() -> Path | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _Guid(ctypes.Structure):
+            _fields_ = [
+                ("Data1", wintypes.DWORD),
+                ("Data2", wintypes.WORD),
+                ("Data3", wintypes.WORD),
+                ("Data4", ctypes.c_ubyte * 8),
+            ]
+
+        folder = _Guid(
+            0xFDD39AD0,
+            0x238F,
+            0x46AF,
+            (ctypes.c_ubyte * 8)(0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7),
+        )
+        pointer = ctypes.c_wchar_p()
+        result = ctypes.windll.shell32.SHGetKnownFolderPath(
+            ctypes.byref(folder), 0, None, ctypes.byref(pointer)
+        )
+        if result != 0 or not pointer.value:
+            return None
+        value = Path(pointer.value)
+        ctypes.windll.ole32.CoTaskMemFree(pointer)
+        return value
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def media_dir() -> Path:
+    """Dossier dedie aux appels et aux imports, hors des donnees techniques.
+
+    Sur Windows il s'agit de `Documents\\Vox`, un dossier visible et facile a
+    retrouver (sauvegarde, synchronisation) ; les dictées, les reglages et les
+    journaux restent dans le dossier de donnees de l'application.
+    """
+    override = os.environ.get("VOX_MEDIA_DIR")
+    if override:
+        path = Path(override)
+    elif os.environ.get("VOX_DATA_DIR"):
+        # Tests et installations portables : tout reste sous VOX_DATA_DIR.
+        path = data_dir() / "appels-imports"
+    else:
+        path = documents_dir() / APP_NAME
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Support en lecture seule ou synchronisation indisponible : on ne
+        # perd pas la possibilite d'enregistrer.
+        path = data_dir() / "appels-imports"
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def calls_dir() -> Path:
     """Pistes audio des appels enregistres par Vox (micro + systeme)."""
-    path = data_dir() / "appels"
+    path = media_dir() / "Appels"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def library_dir() -> Path:
     """Imports : index, transcripts et exports generes par l'application."""
-    path = data_dir() / "bibliotheque"
+    path = media_dir() / "Imports"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def library_index_file() -> Path:
+    return library_dir() / "bibliotheque.jsonl"
+
+
+def legacy_calls_dir() -> Path:
+    """Ancien emplacement des pistes d'appel (avant le dossier dedie)."""
+    return data_dir() / "appels"
+
+
+def legacy_library_dir() -> Path:
+    """Ancien emplacement des transcripts d'import."""
+    return data_dir() / "bibliotheque"
+
+
+def legacy_library_index_file() -> Path:
     return data_dir() / "bibliotheque.jsonl"
 
 

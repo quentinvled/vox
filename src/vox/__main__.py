@@ -60,6 +60,9 @@ def main_gui() -> int:
     from .ui.widgets import make_app_icon
 
     _configure_logging()
+    from . import storage
+
+    storage.migrate()
     log.info(
         "Vox %s — demarrage (fige=%s, arch=%s)",
         __version__,
@@ -270,6 +273,10 @@ def main_cli() -> int:
         print(f"Vox {__version__}")
         return 0
 
+    from . import storage
+
+    storage.migrate()
+
     if args.list_devices:
         from .recorder import list_input_devices
 
@@ -310,10 +317,12 @@ def main_cli() -> int:
 
     if args.where:
         from . import install
-        from .paths import data_dir
+        from .paths import calls_dir, data_dir, library_dir
 
         print(f"programme : {sys.executable}")
         print(f"donnees   : {data_dir()}")
+        print(f"appels    : {calls_dir()}")
+        print(f"imports   : {library_dir()}")
         print(f"installe  : {install.installed_exe()}")
         print(f"demarrage : {'active' if install.is_autostart_enabled() else 'desactive'}")
         return 0

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -45,6 +46,7 @@ from ..config import (
 )
 from ..models import Catalogue
 from ..models import label as model_label
+from ..paths import media_dir
 from ..recorder import list_input_devices
 from ..reword import TONES
 from ..stats import format_duration, format_money
@@ -606,6 +608,39 @@ class SettingsWindow(QDialog):
         rec_form.addRow("", rec_actions)
 
         outer.addWidget(rec_box)
+
+        storage_box = QGroupBox("Appels et imports")
+        storage_form = QFormLayout(storage_box)
+        storage_form.setContentsMargins(14, 16, 14, 12)
+        storage_form.setSpacing(9)
+
+        self.media_path_label = QLabel(str(media_dir()))
+        self.media_path_label.setObjectName("hint")
+        self.media_path_label.setWordWrap(True)
+        self.media_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        storage_form.addRow("Dossier", self.media_path_label)
+
+        storage_actions = QHBoxLayout()
+        storage_actions.setSpacing(6)
+        self.open_media_button = QPushButton("Ouvrir le dossier")
+        self.open_media_button.clicked.connect(self._open_media_folder)
+        storage_actions.addWidget(self.open_media_button)
+        storage_actions.addStretch(1)
+        self.media_size_label = QLabel("")
+        self.media_size_label.setObjectName("hint")
+        storage_actions.addWidget(self.media_size_label)
+        storage_form.addRow("", storage_actions)
+
+        storage_hint = QLabel(
+            "Les pistes d'appel vont dans « Appels » et les transcriptions d'import "
+            "dans « Imports ». Ce dossier est visible dans tes documents, hors du "
+            "dossier technique de Vox ; les dictées restent dans le dossier de données."
+        )
+        storage_hint.setObjectName("hint")
+        storage_hint.setWordWrap(True)
+        storage_form.addRow(storage_hint)
+
+        outer.addWidget(storage_box)
 
         if sys.platform == "win32":
             tray_text = (
@@ -1345,6 +1380,7 @@ class SettingsWindow(QDialog):
         self.retention_spin.setEnabled(on)
         self.open_recordings_button.setEnabled(True)
         self._refresh_records_size()
+        self._refresh_media_size()
 
     def _refresh_records_size(self) -> None:
         info = recordings.stats()
@@ -1354,6 +1390,23 @@ class SettingsWindow(QDialog):
         self.records_size_label.setText(
             f"{info['count']} enregistrement(s) · {info['size']}"
         )
+
+    def _open_media_folder(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(media_dir())))
+
+    def _refresh_media_size(self) -> None:
+        files = 0
+        total = 0
+        for path in media_dir().rglob("*"):
+            if not path.is_file():
+                continue
+            files += 1
+            with contextlib.suppress(OSError):
+                total += path.stat().st_size
+        if not files:
+            self.media_size_label.setText("vide")
+            return
+        self.media_size_label.setText(f"{files} fichier(s) · {recordings.human_size(total)}")
 
     def _sync_hotkey_state(self) -> None:
         custom = self.hotkey_combo.currentData() == "custom"
