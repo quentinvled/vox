@@ -31,14 +31,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__, audiofiles, library, permissions, recordings
+from .. import __version__, audiofiles, library, models, permissions, recordings
 from ..api import PROVIDERS, Client, diarizes_by_default
 from ..config import (
     DEFAULT_DIARIZATION_MODEL,
     DEFAULT_PASTE_KEYS,
     HOTKEY_CHOICES,
     HOTKEY_MODIFIERS,
+    KEY_FIELDS,
     Settings,
+    default_models,
+    key_for,
 )
 from ..models import Catalogue
 from ..models import label as model_label
@@ -214,6 +217,7 @@ class SettingsWindow(QDialog):
     dashboard_requested = Signal()
     check_requested = Signal(str)
     update_requested = Signal()
+    models_refresh_requested = Signal(str, str)
     import_requested = Signal(list, dict)
     import_cancel_requested = Signal()
 
@@ -223,6 +227,11 @@ class SettingsWindow(QDialog):
         self.setMinimumSize(680, 620)
         self._settings = settings
         self._catalogue = catalogue
+        self._catalogues = {catalogue.provider: catalogue}
+        self._import_catalogue = (
+            catalogue if catalogue.provider == "openrouter" else models.fallback("openrouter")
+        )
+        self._model_selections = {settings.provider: (settings.stt_model, settings.chat_model)}
         self._tester: _KeyTester | None = None
         self._update_info = None
         self._keys: dict[str, str] = {}
@@ -235,11 +244,15 @@ class SettingsWindow(QDialog):
         self._build()
         self._load(settings)
         self._wire()
+        self._show_models_status(catalogue)
 
     # ------------------------------------------------------------------
     def showEvent(self, event) -> None:
-        """Rafraichit les autorisations macOS a chaque ouverture des reglages."""
+        """Actualise les modeles et les autorisations sans bloquer la fenetre."""
         super().showEvent(event)
+        self.request_models()
+        if self._active_provider != "openrouter":
+            self.models_refresh_requested.emit("openrouter", self._model_key("openrouter"))
         if sys.platform == "darwin":
             self._refresh_permissions()
 
@@ -343,6 +356,16 @@ class SettingsWindow(QDialog):
         self.chat_combo = NoWheelComboBox()
         self.chat_combo.setMinimumWidth(260)
         api_form.addRow("Modèle de reformulation", self.chat_combo)
+
+        models_row = QHBoxLayout()
+        self.refresh_models_button = QPushButton("Actualiser les modèles")
+        models_row.addWidget(self.refresh_models_button)
+        self.models_status = QLabel("")
+        self.models_status.setTextFormat(Qt.PlainText)
+        self.models_status.setObjectName("hint")
+        self.models_status.setWordWrap(True)
+        models_row.addWidget(self.models_status, 1)
+        api_form.addRow("", models_row)
 
         self.language_combo = NoWheelComboBox()
         for code, name in LANGUAGES:
@@ -837,7 +860,7 @@ class SettingsWindow(QDialog):
         self.import_model_combo = NoWheelComboBox()
         self.import_model_combo.setMinimumWidth(280)
         self.import_model_combo.addItem("Automatique (recommandé par Vox)", "")
-        for item in self._catalogue.stt:
+        for item in self._import_catalogue.stt:
             model_id = item.get("id") or ""
             if model_id:
                 self.import_model_combo.addItem(model_label(item), model_id)
@@ -1036,7 +1059,7 @@ class SettingsWindow(QDialog):
 
     def _import_model_rate(self) -> float | None:
         model = self.import_model_combo.currentData() or DEFAULT_DIARIZATION_MODEL
-        for item in self._catalogue.stt:
+        for item in self._import_catalogue.stt:
             if item.get("id") == model:
                 return item.get("per_hour")
         return None
@@ -1223,6 +1246,9 @@ class SettingsWindow(QDialog):
         self.reload_button.clicked.connect(self._reload_devices)
         self.reword_check.toggled.connect(self._sync_reword_state)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        self.refresh_models_button.clicked.connect(self.request_models)
+        self.key_edit.textEdited.connect(self._on_model_key_edited)
+        self.key_edit.editingFinished.connect(self.request_models)
         self._sync_hotkey_state()
         self._sync_hide_delay_state()
         self._sync_recording_state()
@@ -1232,8 +1258,16 @@ class SettingsWindow(QDialog):
         if not provider or provider == self._active_provider:
             return
         self._keys[self._active_provider] = self.key_edit.text().strip()
+        self._model_selections[self._active_provider] = (
+            self.stt_combo.currentData(), self.chat_combo.currentData()
+        )
         self._apply_provider(provider)
+        self._catalogue = self._catalogues.get(provider) or models.fallback(provider)
+        stt, chat = self._model_selections.get(provider) or default_models(provider)
+        self._fill(self.stt_combo, self._catalogue.stt, stt)
+        self._fill(self.chat_combo, self._catalogue.chat, chat)
         self.key_status.setText("")
+        self.request_models()
 
     def _apply_provider(self, provider: str) -> None:
         info = PROVIDERS[provider]
@@ -1245,6 +1279,62 @@ class SettingsWindow(QDialog):
             f'<a href="{info.console_url}" style="color:inherit;text-decoration:none">'
             f"Obtenir une cle → {info.console_url}</a>"
         )
+
+    def _model_key(self, provider: str) -> str:
+        key = (
+            self.key_edit.text().strip()
+            if provider == self._active_provider else self._keys.get(provider, "")
+        )
+        draft = dataclasses.replace(self._settings, **{KEY_FIELDS[provider]: key})
+        return key_for(provider, draft)
+
+    def _on_model_key_edited(self) -> None:
+        self.refresh_models_button.setEnabled(True)
+        self.models_status.setText("Clé modifiée : actualise la liste des modèles.")
+
+    def request_models(self) -> None:
+        """Demande la liste pour le fournisseur et la cle en cours d'edition."""
+        self.refresh_models_button.setEnabled(False)
+        self.models_status.setText("Actualisation des modèles…")
+        self.models_refresh_requested.emit(self._active_provider, self._model_key(self._active_provider))
+
+    def set_catalogue(self, catalogue: Catalogue, api_key: str) -> None:
+        """Applique une reponse sans ecraser les choix ni un autre fournisseur."""
+        provider = catalogue.provider
+        if api_key != self._model_key(provider):
+            return  # Une ancienne cle a termine sa requete apres une modification.
+        self._catalogues[provider] = catalogue
+        if provider == "openrouter":
+            self._import_catalogue = catalogue
+            selected = self.import_model_combo.currentData() or ""
+            self.import_model_combo.blockSignals(True)
+            self.import_model_combo.clear()
+            self.import_model_combo.addItem("Automatique (recommandé par Vox)", "")
+            for item in catalogue.stt:
+                if item.get("id"):
+                    self.import_model_combo.addItem(model_label(item), item["id"])
+            if selected and self.import_model_combo.findData(selected) < 0:
+                self.import_model_combo.addItem(selected, selected)
+            self._select_data(self.import_model_combo, selected)
+            self.import_model_combo.blockSignals(False)
+            self._sync_import_options()
+        if provider != self._active_provider:
+            return
+        self._catalogue = catalogue
+        self._fill(self.stt_combo, catalogue.stt, self.stt_combo.currentData() or "")
+        self._fill(self.chat_combo, catalogue.chat, self.chat_combo.currentData() or "")
+        self.refresh_models_button.setEnabled(True)
+        self._show_models_status(catalogue)
+
+    def _show_models_status(self, catalogue: Catalogue) -> None:
+        counts = f"{len(catalogue.stt)} modèles de transcription · {len(catalogue.chat)} de reformulation"
+        if catalogue.error:
+            detail = "Dernière liste conservée" if catalogue.from_cache else "Liste partiellement actualisée"
+            self.models_status.setText(f"{detail} : {catalogue.error}")
+        elif catalogue.from_cache:
+            self.models_status.setText(f"Liste enregistrée · {counts}")
+        else:
+            self.models_status.setText(f"Liste à jour · {counts}")
 
     def _sync_hide_delay_state(self) -> None:
         # Le delai ne sert que si la pilule survit a la fin de l'ecoute.

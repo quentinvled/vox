@@ -479,6 +479,8 @@ class Client:
             self._raise_for_error(response)
             out = []
             for model in response.json().get("data") or []:
+                if not model.get("id"):
+                    continue
                 per_hour = per_hour_from_catalogue(
                     _to_float((model.get("pricing") or {}).get("prompt"))
                 )
@@ -511,7 +513,14 @@ class Client:
         out = []
         for model in self.list_models():
             model_id = model.get("id") or ""
-            if not model_id or "whisper" in model_id:
+            if not model_id or "whisper" in model_id or "transcribe" in model_id:
+                continue
+            architecture = model.get("architecture") or {}
+            inputs = architecture.get("input_modalities")
+            outputs = architecture.get("output_modalities")
+            if (inputs is not None and "text" not in inputs) or (
+                outputs is not None and "text" not in outputs
+            ):
                 continue
             out.append({"id": model_id, "name": model_id})
         out.sort(key=lambda m: m["id"])

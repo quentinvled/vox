@@ -80,7 +80,7 @@ MIN_CALL_SECONDS = 1.5
 class _CatalogueLoader(QThread):
     """Charge le catalogue de modeles sans bloquer l'interface."""
 
-    loaded = Signal(object)
+    loaded = Signal(object, str)
 
     def __init__(self, provider: str, api_key: str, force: bool = False, parent=None) -> None:
         super().__init__(parent)
@@ -89,7 +89,12 @@ class _CatalogueLoader(QThread):
         self._force = force
 
     def run(self) -> None:
-        self.loaded.emit(models.load(self._provider, self._api_key, force_refresh=self._force))
+        try:
+            catalogue = models.load(self._provider, self._api_key, force_refresh=self._force)
+        except Exception as exc:
+            catalogue = models.fallback(self._provider)
+            catalogue.error = str(exc)
+        self.loaded.emit(catalogue, self._api_key)
 
 
 class _UpdateChecker(QThread):
@@ -425,7 +430,7 @@ class VoxApp(QObject):
         self._recordings_window: RecordingsWindow | None = None
         self._pending_enter = False
         self._recording_started_at = 0.0
-        self._loader: _CatalogueLoader | None = None
+        self._catalogue_loaders: dict[tuple[str, str], _CatalogueLoader] = {}
         self._update_checker: _UpdateChecker | None = None
         self._update_info: updates.UpdateInfo | None = None
         self._downloader: _UpdateDownloader | None = None
@@ -678,18 +683,36 @@ class VoxApp(QObject):
     # ------------------------------------------------------------------
     # Catalogue de modeles
     # ------------------------------------------------------------------
-    def _load_catalogue(self, force: bool = False) -> None:
-        self._loader = _CatalogueLoader(
-            self.settings.provider, self.settings.effective_key, force, self
-        )
-        self._loader.loaded.connect(self._on_catalogue)
-        self._loader.start()
+    def _load_catalogue(
+        self, force: bool = True, provider: str | None = None, api_key: str | None = None
+    ) -> None:
+        provider = provider or self.settings.provider
+        key = config_module.key_for(provider, self.settings) if api_key is None else api_key
+        signature = (provider, key)
+        previous = self._catalogue_loaders.get(signature)
+        if previous is not None and previous.isRunning():
+            return  # Un double clic ou une ouverture pendant le chargement suffit.
+        loader = _CatalogueLoader(provider, key, force, self)
+        self._catalogue_loaders[signature] = loader
+        loader.loaded.connect(self._on_catalogue)
+        loader.finished.connect(self._on_catalogue_finished)
+        loader.finished.connect(loader.deleteLater)
+        loader.start()
 
-    def _on_catalogue(self, catalogue: Catalogue) -> None:
-        self.catalogue = catalogue
+    def _on_catalogue_finished(self) -> None:
+        worker = self.sender()
+        for signature, loader in list(self._catalogue_loaders.items()):
+            if loader is worker:
+                del self._catalogue_loaders[signature]
+
+    def _on_catalogue(self, catalogue: Catalogue, api_key: str) -> None:
         if catalogue.error:
             log.info("Catalogue en repli : %s", catalogue.error)
-        self._refresh_model_views()
+        if catalogue.provider == self.settings.provider and api_key == self.settings.effective_key:
+            self.catalogue = catalogue
+            self._refresh_model_views()
+        if self._settings_window is not None:
+            self._settings_window.set_catalogue(catalogue, api_key)
 
     def _refresh_model_views(self) -> None:
         self.tray.set_models(self.catalogue.stt, self.settings.stt_model)
@@ -934,6 +957,9 @@ class VoxApp(QObject):
             lambda url: self.check_updates(url, manual=True)
         )
         window.update_requested.connect(self.start_update)
+        window.models_refresh_requested.connect(
+            lambda provider, key: self._load_catalogue(force=True, provider=provider, api_key=key)
+        )
         if self._update_info is not None:
             window.show_update_available(self._update_info)
 
@@ -1738,10 +1764,9 @@ class VoxApp(QObject):
         self.settings = settings
 
         if previous.provider != settings.provider:
-            stt_default, chat_default = config_module.default_models(settings.provider)
-            settings.stt_model = stt_default
-            settings.chat_model = chat_default
-            self.settings = settings
+            # Les reglages ont deja choisi les defauts du nouveau fournisseur,
+            # ou un modele choisi explicitement : ne pas ecraser cette selection.
+            self.catalogue = models.fallback(settings.provider)
 
         config_module.save(settings)
         self.pipeline.apply_settings(settings)
@@ -1800,6 +1825,10 @@ class VoxApp(QObject):
         self._call_timer.stop()
         self.hotkey.stop()
         self._save_call_before_quit()
+        # Les chargements appartiennent au controleur, pas a la fenetre des
+        # reglages : fermer celle-ci pendant une requete ne doit pas tuer Qt.
+        for loader in list(self._catalogue_loaders.values()):
+            loader.wait()
         for worker in (self._import_worker, self._names_worker, self._call_worker):
             if worker is not None and worker.isRunning():
                 if isinstance(worker, (_ImportWorker, _CallTranscriber)):

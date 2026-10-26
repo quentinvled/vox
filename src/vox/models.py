@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -15,6 +16,7 @@ from .api import per_hour_from_catalogue as api_per_hour_from_catalogue
 from .paths import models_cache_file
 
 CACHE_TTL_SECONDS = 24 * 3600
+_CACHE_LOCK = threading.RLock()
 
 # Repli si le reseau est indisponible (tarifs indicatifs $/h d'audio).
 FALLBACK_STT: dict[str, list[dict]] = {
@@ -81,16 +83,21 @@ def _read_cache() -> dict | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        with _CACHE_LOCK:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else None
     except (OSError, json.JSONDecodeError):
         return None
 
 
 def _write_cache(provider: str, stt: list[dict], chat: list[dict]) -> None:
-    payload = _read_cache() or {}
-    payload[provider] = {"fetched_at": time.time(), "stt": stt, "chat": chat}
-    with contextlib.suppress(OSError):
-        models_cache_file().write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    with _CACHE_LOCK, contextlib.suppress(OSError):
+        payload = _read_cache() or {}
+        payload[provider] = {"fetched_at": time.time(), "stt": stt, "chat": chat}
+        path = models_cache_file()
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(path)
 
 
 def per_hour_from_catalogue(prompt: float | None) -> float | None:
@@ -118,8 +125,8 @@ def _sort_preferred(items: list[dict], preferred: list[str]) -> list[dict]:
 
 def fallback(provider: str) -> Catalogue:
     return Catalogue(
-        stt=FALLBACK_STT.get(provider, FALLBACK_STT["openrouter"]),
-        chat=FALLBACK_CHAT.get(provider, FALLBACK_CHAT["openrouter"]),
+        stt=[dict(item) for item in FALLBACK_STT.get(provider, FALLBACK_STT["openrouter"])],
+        chat=[dict(item) for item in FALLBACK_CHAT.get(provider, FALLBACK_CHAT["openrouter"])],
         provider=provider,
         from_cache=True,
     )
@@ -129,45 +136,63 @@ def load(provider: str = "openrouter", api_key: str = "", force_refresh: bool = 
     """Renvoie le catalogue du fournisseur (cache < 24 h, sinon reseau)."""
     cached = _read_cache() or {}
     entry = cached.get(provider)
+    if not isinstance(entry, dict) or not isinstance(entry.get("stt"), list):
+        entry = None
+    try:
+        fetched_at = float((entry or {}).get("fetched_at") or 0)
+    except (TypeError, ValueError):
+        fetched_at = 0.0
 
     if (
         not force_refresh
         and entry
-        and time.time() - float(entry.get("fetched_at") or 0) < CACHE_TTL_SECONDS
+        and time.time() - fetched_at < CACHE_TTL_SECONDS
         and entry.get("stt")
     ):
         return Catalogue(
             stt=entry["stt"],
             chat=entry.get("chat") or FALLBACK_CHAT.get(provider, []),
             provider=provider,
-            fetched_at=float(entry.get("fetched_at") or 0),
+            fetched_at=fetched_at,
             from_cache=True,
         )
 
-    if not api_key:
+    if not api_key and provider != "openrouter":
         if entry and entry.get("stt"):
             return Catalogue(
                 stt=entry["stt"],
                 chat=entry.get("chat") or FALLBACK_CHAT.get(provider, []),
                 provider=provider,
+                fetched_at=fetched_at,
                 from_cache=True,
+                error=f"Clé {provider} absente : dernière liste conservée.",
             )
         result = fallback(provider)
         result.error = f"Cle {provider} absente : liste de modeles locale utilisee."
         return result
 
+    error = None
     try:
-        client = Client(provider, api_key)
-        stt = _sort_preferred(client.list_stt_models(), PREFERRED_STT)
-        chat = _sort_preferred(client.list_chat_models(), PREFERRED_CHAT)
-        if not stt:
-            raise RuntimeError("aucun modele de transcription renvoye")
+        with Client(provider, api_key, timeout=10.0) as client:
+            stt = _sort_preferred(client.list_stt_models(), PREFERRED_STT)
+            if not stt:
+                raise RuntimeError("aucun modele de transcription renvoye")
+            try:
+                chat = _sort_preferred(client.list_chat_models(), PREFERRED_CHAT)
+                if not chat:
+                    raise RuntimeError("aucun modele de reformulation renvoye")
+            except Exception as exc:
+                # Un probleme de catalogue chat ne doit pas masquer les nouveaux
+                # modeles de transcription qui viennent d'etre recuperes.
+                chat = (entry or {}).get("chat") or fallback(provider).chat
+                error = f"Liste de reformulation non actualisée ({exc})"
     except Exception as exc:
         if entry and entry.get("stt"):
             return Catalogue(
                 stt=entry["stt"],
                 chat=entry.get("chat") or FALLBACK_CHAT.get(provider, []),
                 provider=provider,
+                fetched_at=fetched_at,
                 from_cache=True,
                 error=str(exc),
             )
@@ -177,7 +202,7 @@ def load(provider: str = "openrouter", api_key: str = "", force_refresh: bool = 
 
     _write_cache(provider, stt, chat)
     _merge_measured_rates(stt)
-    return Catalogue(stt=stt, chat=chat, provider=provider, fetched_at=time.time())
+    return Catalogue(stt=stt, chat=chat, provider=provider, fetched_at=time.time(), error=error)
 
 
 def _merge_measured_rates(items: list[dict]) -> None:

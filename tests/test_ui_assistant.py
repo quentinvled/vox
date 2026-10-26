@@ -24,6 +24,7 @@ from vox.ui.widgets import make_app_icon, make_dot_icon
 @pytest.fixture(autouse=True)
 def _data_dir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("VOX_DATA_DIR", str(tmp_path / "donnees"))
+    monkeypatch.setattr(models, "load", lambda provider, *args, **kwargs: models.fallback(provider))
 
 
 @pytest.fixture(scope="module")

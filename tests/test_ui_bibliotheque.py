@@ -15,7 +15,7 @@ from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QApplication
 
-from vox import audiofiles, imports, library, recordings, routing
+from vox import audiofiles, imports, library, models, recordings, routing
 from vox.app import _ImportWorker, _NamesWorker
 from vox.config import Settings
 from vox.transcript import Segment, Speaker, Transcript
@@ -25,6 +25,7 @@ from vox.ui.history_window import RecordingsWindow
 @pytest.fixture(autouse=True)
 def _data_dir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("VOX_DATA_DIR", str(tmp_path / "donnees"))
+    monkeypatch.setattr(models, "load", lambda provider, *args, **kwargs: models.fallback(provider))
 
 
 @pytest.fixture(scope="module")

@@ -15,6 +15,10 @@ je m'en occupe demain » et le texte inséré est le message fini. Un texte copi
 concis » réécrit ce qui est dans le presse-papier. Un nouvel appui sur Espace
 revient à la dictée normale.
 
+En mode dictée, une question est retranscrite, jamais exécutée. La reformulation
+sépare le texte des instructions et, si une question devient une réponse
+évidente, conserve le texte dicté à la place.
+
 Le texte n'est jamais perdu : la pilule reste affichée pendant tout le
 traitement et ne s'efface qu'une fois l'insertion **confirmée** (la fenêtre
 active est la même qu'à l'arrêt de l'écoute). Sans confirmation, elle reste à
@@ -116,6 +120,23 @@ l'intégrité du téléchargement.
    avoir ajouté quelques dollars de crédit — la dictée coûte ~0,10 $/heure).
 4. Clique sur **Tester**, puis **Enregistrer**.
 5. Maintiens **Ctrl + Maj**, parle, relâche : le texte s'insère.
+
+## Choisir et actualiser les modèles
+
+Dans **Réglages → Général**, choisis le fournisseur puis le **modèle de
+transcription**. **Whisper Large V3 Turbo** apparaît chez OpenRouter sous le nom
+**OpenAI: Whisper Large V3 Turbo** ; chez Groq, son identifiant est
+`whisper-large-v3-turbo`.
+
+Les listes sont récupérées en direct à l'ouverture des réglages et au changement
+de fournisseur. Le bouton **Actualiser les modèles** permet de relancer la
+récupération sans redémarrer Vox. Les choix en cours sont conservés et un message
+indique si la liste est à jour ou si la connexion a échoué. Le catalogue
+OpenRouter est public : aucune clé n'est nécessaire pour le consulter, mais une
+clé reste indispensable pour transcrire ou reformuler.
+
+En cas de coupure, Vox garde la dernière liste enregistrée. L'onglet **Importer**
+reste lié aux modèles OpenRouter, même si la dictée utilise un autre fournisseur.
 
 ## Mises à jour
 
