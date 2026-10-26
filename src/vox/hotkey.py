@@ -148,9 +148,9 @@ class _WindowsPoller:
                 self._warned = True
                 log.info("Hook clavier silencieux : la scrutation prend le relais.")
             self._manager._handle(name, down)
-        # Espace : bascule dictée/consigne. Sur Windows, la touche est avalée
-        # pendant l'écoute (aucun caractère parasite) ; le hook la voit donc
-        # plus, et c'est cette scrutation qui la détecte.
+        # Espace : bascule dictée/consigne. Le filtre bloquant s'en occupe en
+        # priorité (voir `_space_filter`) ; cette scrutation n'est qu'un filet
+        # de sécurité si le filtre n'a pas pu être installé.
         if self._manager.armed:
             down = self._down(VK_SPACE)
             if down != self._space_down:
@@ -206,7 +206,7 @@ class HotkeyManager:
         # entre le debut et la fin de l'enregistrement.
         self._armed = False
         self._space_down = False
-        self._space_unblock = None
+        self._space_unhook = None
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -256,22 +256,44 @@ class HotkeyManager:
         self._sync_space_suppression(self._armed)
 
     def _sync_space_suppression(self, armed: bool) -> None:
+        """Installe/retire le filtre qui avale l'Espace pendant l'ecoute.
+
+        `keyboard.block_key` ne convient pas : la touche est ecartee *avant*
+        d'atteindre les hooks, donc ni `_handle` ni `GetAsyncKeyState` ne la
+        voient, et la bascule ne se declenche jamais. On passe par un hook
+        bloquant : il recoit l'evenement avant de l'avaler, ce qui permet de
+        basculer le mode et de supprimer le caractere parasite d'un seul geste.
+        """
         if sys.platform != "win32":
             return
         if armed:
-            if self._space_unblock is not None:
+            if self._space_unhook is not None:
                 return
             try:
                 import keyboard
 
-                self._space_unblock = keyboard.block_key("space")
+                self._space_unhook = keyboard.hook(self._space_filter, suppress=True)
             except Exception as exc:  # pragma: no cover - depend du systeme
                 log.info("Blocage de l'Espace indisponible : %s", exc)
-                self._space_unblock = None
-        elif self._space_unblock is not None:
-            unblock, self._space_unblock = self._space_unblock, None
+                self._space_unhook = None
+        elif self._space_unhook is not None:
+            unhook, self._space_unhook = self._space_unhook, None
             with contextlib.suppress(Exception):
-                unblock()
+                unhook()
+
+    def _space_filter(self, event) -> bool:
+        """Bascule le mode sur Espace, et avale la touche (hook bloquant).
+
+        Renvoie True pour tout le reste : le filtre laisse passer les autres
+        touches sans les modifier.
+        """
+        try:
+            if (getattr(event, "name", "") or "").lower() != "space":
+                return True
+            self._on_space(getattr(event, "event_type", "") == "down")
+            return False
+        except Exception:  # pragma: no cover - jamais bloquant pour l'ecoute
+            return True
 
     def _on_space(self, down: bool) -> None:
         """Espace appuye pendant l'ecoute : bascule le mode (une fois/appui)."""

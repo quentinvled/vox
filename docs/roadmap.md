@@ -119,6 +119,14 @@ l'agent.
 
 ## Journal
 
+- **26/10/2026 (bascule Espace réparée)** — le mode consigne ne se déclenchait
+  jamais sous Windows : la touche était bloquée par `keyboard.block_key`, qui
+  l'écarte **avant** les hooks, si bien que ni le hook ni la scrutation
+  `GetAsyncKeyState` ne la voyaient. L'Espace est désormais traité par un hook
+  bloquant (`keyboard.hook(..., suppress=True)`) : il reçoit l'événement avant
+  de l'avaler, bascule le mode et supprime le caractère parasite d'un seul
+  geste. La scrutation ne sert plus que de filet de sécurité, et la bascule est
+  journalisée (`Bascule de mode : instruction`). 312 tests.
 - **25/10/2026 (macOS)** — portage complet : `injector_mac` (pynput/Quartz,
   `pbcopy`/`pbpaste`, application active via AppKit ou `lsappinfo`), LaunchAgent
   pour le démarrage automatique, ⌘V par défaut, bloc d'autorisations

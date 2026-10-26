@@ -785,7 +785,8 @@ class VoxApp(QObject):
         """Espace pendant l'ecoute : bascule dictee ⇄ consigne."""
         if not self.pipeline.recording:
             return
-        self.pipeline.toggle_mode()
+        mode = self.pipeline.toggle_mode()
+        log.info("Bascule de mode : %s", mode)
         if self.settings.sounds:
             sounds.play("mode")
 

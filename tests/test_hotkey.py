@@ -84,3 +84,36 @@ def test_set_armed_resets_the_space_state() -> None:
     hotkey.set_armed(True)
     hotkey._handle("space", True)
     assert hotkey.drain() == [EVENT_MODE]
+
+
+class _Event:
+    """Événement minimal, comme ceux du module `keyboard` sous Windows."""
+
+    def __init__(self, name: str, event_type: str = "down") -> None:
+        self.name = name
+        self.event_type = event_type
+
+
+def test_space_filter_toggles_and_swallows_the_key() -> None:
+    """Le filtre bloquant Windows : bascule le mode ET avale l'Espace."""
+    hotkey = _manager(mode="toggle")
+    hotkey.set_armed(True)
+
+    assert hotkey._space_filter(_Event("space", "down")) is False
+    assert hotkey.drain() == [EVENT_MODE]
+    # Le relâchement est avalé aussi, sans rebasculer.
+    assert hotkey._space_filter(_Event("space", "up")) is False
+    assert hotkey.drain() == []
+
+    # Un second appui rebascule.
+    hotkey._space_filter(_Event("space", "down"))
+    assert hotkey.drain() == [EVENT_MODE]
+
+
+def test_space_filter_lets_every_other_key_through() -> None:
+    hotkey = _manager()
+    hotkey.set_armed(True)
+    assert hotkey._space_filter(_Event("a", "down")) is True
+    assert hotkey._space_filter(_Event("ctrl", "down")) is True
+    assert hotkey.drain() == []
+
