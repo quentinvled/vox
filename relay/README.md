@@ -97,10 +97,12 @@ Vox se branche sur un relais local en mettant
 
 Application Coolify « Vox relais » (projet **Vox**, serveur VLED-Hebergement),
 construite depuis ce dépôt public : branche `main`, dossier de base `/relay`,
-`Dockerfile`, port 8080, contrôle de santé `/healthz`, domaine
-`https://vox.vled.fr` (le robot DNS crée l'entrée Cloudflare tout seul).
+`Dockerfile`, port 8080, domaine `vox.vled.fr` (le robot DNS crée l'entrée
+Cloudflare tout seul). Le contrôle de santé est celui du `Dockerfile`
+(`/healthz`) : l'image n'embarque ni curl ni wget, dont se sert celui de Coolify.
 
-Un `git push` sur `main` qui touche `relay/` redéploie le relais. Après une
-modification de la page, augmenter `CACHE` dans `web/sw.js` et `VERSION` dans
-`web/js/main.js` : les téléphones prennent la nouvelle version à l'ouverture
-suivante.
+Le dépôt étant public et sans application GitHub, un `git push` ne redéploie
+pas : après une modification de `relay/`, relancer **Deploy** dans Coolify.
+Après une modification de la page, augmenter aussi `CACHE` dans `web/sw.js` et
+`VERSION` dans `web/js/main.js` : les téléphones prennent la nouvelle version à
+l'ouverture suivante.
