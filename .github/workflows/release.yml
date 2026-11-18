@@ -157,7 +157,7 @@ jobs:
   # ------------------------------------------------------------------
   macos:
     needs: verify
-    runs-on: macos-14
+    runs-on: macos-15  # Apple Silicon (macos-14 a ete retire par GitHub)
     steps:
       - name: Recuperer le depot
         uses: actions/checkout@v7
