@@ -105,7 +105,7 @@ jobs:
   # ------------------------------------------------------------------
   linux:
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # glibc 2.39 : l AppImage doit tourner sur les distributions courantes
     steps:
       - name: Recuperer le depot
         uses: actions/checkout@v7
