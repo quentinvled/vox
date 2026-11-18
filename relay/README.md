@@ -22,6 +22,8 @@ l'ordinateur, avec ses propres réglages.
 | `web/js/main.js` | Écran, gestes du bouton, états renvoyés par l'ordinateur |
 | `web/js/link.js` | Connexion au relais, reconnexion automatique, file d'attente |
 | `web/js/mic.js`, `capture-worklet.js` | Micro : 16 kHz mono, paquets de 80 ms |
+| `web/js/scanner.js`, `scan-worker.js` | Scanner de code intégré (BarcodeDetector, sinon jsQR) |
+| `web/vendor/` | jsQR 1.4.0 minifié (Apache-2.0), pour Safari qui ne lit pas les QR |
 | `web/sw.js` | Ouverture instantanée depuis le cache, mise à jour en arrière-plan |
 | `tests/` | Tests du relais (`uv run pytest`) |
 | `tools/make_icons.py` | Régénère les PNG à partir de `web/icons/icon.svg` |
@@ -37,7 +39,10 @@ Côté ordinateur : `src/vox/phone.py` (liaison) et `src/vox/ui/phone_window.py`
    peut donc occuper la place de l'ordinateur.
 2. « Relier un téléphone » crée un **jeton de téléphone** aléatoire et affiche
    `https://vox.vled.fr/#<salon>.<jeton>` en code QR. Le fragment `#…` n'est
-   jamais envoyé au serveur par le navigateur.
+   jamais envoyé au serveur par le navigateur. Le code se scanne depuis l'app
+   (bouton « Scanner le code ») : sur iPhone, l'app de l'écran d'accueil ne
+   partage pas sa mémoire avec Safari, où l'appareil photo ouvrirait le lien.
+   Seuls les liens de ce même relais sont acceptés.
 3. Vox ne garde que l'**empreinte** du jeton
    (`sha256("vox-phone:" + jeton)[:32]`) et l'annonce au relais. Un téléphone
    n'est relayé que si l'empreinte de son jeton est annoncée.
@@ -75,11 +80,23 @@ Premier message de chaque connexion (10 s au plus) :
 | téléphone → ordinateur | `unpair` | Le téléphone se délie |
 | ordinateur → téléphones | `state` `{state, text?, message?}` | `listening`, `transcribing`, `rewording`, `instructing`, `done`, `review`, `idle`, `busy`, `error` |
 | ordinateur → téléphones | `notice` `{message}` | Information courte (« Rien capté. ») |
+| les deux → relais | `ping` | Le relais répond `pong` (connexion encore vivante ?) |
 
 Le relais ajoute `from` (empreinte de l'expéditeur) à ce qu'il transmet à
 l'ordinateur. Codes de fermeture : 4001 authentification refusée, 4003
 téléphone non autorisé, 4008 salon plein, 4009 un autre ordinateur a pris la
 place, 4013 relais plein.
+
+
+## Ouverture instantanée
+
+La page affiche d'emblée le dernier état connu de l'ordinateur (mémorisé sur le
+téléphone) et le bouton répond avant que la connexion soit établie : le début
+de prise et l'audio attendent dans une file, puis partent dans l'ordre. Si
+l'ordinateur se révèle absent, la prise est abandonnée ; si la connexion
+traîne plus de 3 s, l'écran affiche « Connexion… ». Au retour au premier plan,
+un `ping` vérifie la connexion et la remplace aussitôt si elle ne répond plus
+en 1,5 s. Le micro est ouvert dès l'ouverture quand il est déjà autorisé.
 
 ## Développement
 

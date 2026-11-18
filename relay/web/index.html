@@ -26,8 +26,12 @@
     <p class="welcome-lead" id="welcome-lead">Dicte depuis ton téléphone, le texte s’écrit sur ton ordinateur.</p>
     <ol class="steps">
       <li><span>1</span><p>Sur l’ordinateur, ouvre le menu de Vox puis <b>Relier un téléphone</b>.</p></li>
-      <li><span>2</span><p>Scanne le code avec l’appareil photo.</p></li>
+      <li><span>2</span><p>Scanne le code affiché, ici même.</p></li>
     </ol>
+    <button class="primary" type="button" data-scan>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></svg>
+      Scanner le code
+    </button>
   </section>
 
   <!-- Écran principal -->
@@ -98,6 +102,24 @@
     </section>
   </div>
 
+  <!-- Scanner du code d'appairage -->
+  <div class="scan" id="scan" hidden>
+    <video class="scan-video" id="scan-video" playsinline muted></video>
+    <div class="scan-frame" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <button class="scan-close" id="scan-close" type="button" aria-label="Fermer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div class="scan-bottom">
+      <p class="scan-hint" id="scan-hint">Vise le code affiché par Vox sur l’ordinateur</p>
+      <form class="scan-paste" id="scan-paste" hidden>
+        <input id="scan-input" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"
+               placeholder="Colle le lien copié dans Vox" aria-label="Lien d’appairage">
+        <button type="submit">Relier</button>
+      </form>
+      <button class="scan-link" id="scan-paste-toggle" type="button">Coller un lien à la place</button>
+    </div>
+  </div>
+
   <!-- Options -->
   <div class="sheet" id="sheet" hidden>
     <div class="sheet-backdrop" data-close></div>
@@ -105,6 +127,10 @@
       <span class="sheet-grabber" aria-hidden="true"></span>
       <p class="sheet-title" id="sheet-title">Relié à <b id="sheet-device">l’ordinateur</b></p>
       <div class="sheet-list">
+        <button class="sheet-item" type="button" data-scan>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></svg>
+          <span>Relier à un autre ordinateur</span>
+        </button>
         <button class="sheet-item" id="sheet-install" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M12 7v7m0 0l-3-3m3 3l3-3"/></svg>
           <span>Ajouter à l’écran d’accueil</span>

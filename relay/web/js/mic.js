@@ -1,6 +1,7 @@
-// Micro « chaud » : ouvert au premier appui, gardé tant que la page sert, pour
-// que chaque prise démarre sans délai. Libéré quand la page passe en arrière-plan
-// ou après quelques minutes sans usage.
+// Micro « chaud » : ouvert dès l'ouverture de l'app quand il est déjà autorisé
+// (sinon au premier appui), gardé tant que la page sert, pour que chaque prise
+// démarre sans délai. Libéré quand la page passe en arrière-plan ou après
+// quelques minutes sans usage.
 
 const IDLE_RELEASE_MS = 3 * 60 * 1000;
 
@@ -28,6 +29,18 @@ export class Mic {
     return Boolean(this.node && this.stream && this.stream.active);
   }
 
+  // Ouvre le flux du micro sans geste de l'utilisateur (autorisation déjà
+  // donnée) : le premier appui n'aura plus qu'à brancher le son.
+  warm() {
+    if (this.stream?.active || this.pendingStream) return;
+    this.pendingStream = this.acquire()
+      .catch(() => {})
+      .finally(() => {
+        this.pendingStream = null;
+      });
+    this.armIdle();
+  }
+
   // À appeler pendant un geste de l'utilisateur : iOS n'autorise le son
   // qu'à cette condition. Le premier appel peut afficher la demande d'accès.
   prepare() {
@@ -48,6 +61,12 @@ export class Mic {
   }
 
   async open() {
+    if (this.pendingStream) await this.pendingStream;
+    if (!this.stream?.active) await this.acquire();
+    await this.build();
+  }
+
+  async acquire() {
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -62,6 +81,14 @@ export class Mic {
       const denied = error && (error.name === "NotAllowedError" || error.name === "SecurityError");
       throw new MicError(denied ? "denied" : "unavailable", error && error.message);
     }
+    for (const track of stream.getTracks()) {
+      track.addEventListener("ended", () => this.release());
+    }
+    this.stream = stream;
+  }
+
+  async build() {
+    const stream = this.stream;
     const context = this.context;
     if (!this.moduleLoaded) {
       await context.audioWorklet.addModule("/js/capture-worklet.js");
@@ -90,10 +117,6 @@ export class Mic {
         done();
       }
     };
-    for (const track of stream.getTracks()) {
-      track.addEventListener("ended", () => this.release());
-    }
-    this.stream = stream;
     this.node = node;
   }
 

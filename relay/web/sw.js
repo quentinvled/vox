@@ -2,7 +2,7 @@
 // met à jour en arrière-plan (la nouvelle version sert à l'ouverture suivante).
 // Le canal /ws et /healthz ne passent jamais par le cache.
 
-const CACHE = "vox-1.0.0";
+const CACHE = "vox-1.1.0";
 const SHELL = [
   "/",
   "/app.css",
@@ -11,6 +11,9 @@ const SHELL = [
   "/js/mic.js",
   "/js/pairing.js",
   "/js/capture-worklet.js",
+  "/js/scanner.js",
+  "/js/scan-worker.js",
+  "/vendor/jsqr-1.4.0.min.js",
   "/manifest.webmanifest",
   "/icons/icon.svg",
   "/icons/icon-192.png",

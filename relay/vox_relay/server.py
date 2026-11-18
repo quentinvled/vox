@@ -48,7 +48,7 @@ CLOSE_REPLACED = 4009
 CLOSE_RELAY_FULL = 4013
 
 # Types que le relais traite lui-même et ne transmet jamais.
-_RESERVED = {"auth", "allow", "ready", "computer", "phone"}
+_RESERVED = {"auth", "allow", "ready", "computer", "phone", "ping", "pong"}
 
 REGISTRY = web.AppKey("registry", Registry)
 WEB_ROOT = web.AppKey("web_root", Path)
@@ -132,7 +132,9 @@ async def _serve_computer(ws: web.WebSocketResponse, registry: Registry, hello: 
             if payload is None:
                 continue
             kind = payload.get("t")
-            if kind == "allow":
+            if kind == "ping":
+                await _send(me, {"t": "pong"})
+            elif kind == "allow":
                 room.allowed = clean_allowlist(payload.get("allowed"))
                 await _apply_allowlist(room)
             elif kind not in _RESERVED:
@@ -182,6 +184,11 @@ async def _serve_phone(ws: web.WebSocketResponse, registry: Registry, hello: dic
 
     try:
         async for message in ws:
+            if message.type == WSMsgType.TEXT and _is_ping(message.data):
+                # Sonde du téléphone au retour au premier plan : la connexion
+                # est-elle encore vivante ? Répondue même en attente.
+                await _send(me, {"t": "pong"})
+                continue
             if not me.authorized or room.computer is None:
                 continue  # En attente de l'ordinateur : rien n'est relayé.
             if message.type == WSMsgType.BINARY:
@@ -216,6 +223,11 @@ async def _serve_phone(ws: web.WebSocketResponse, registry: Registry, hello: dic
 # ----------------------------------------------------------------------
 # Point d'entrée WebSocket
 # ----------------------------------------------------------------------
+def _is_ping(data: str) -> bool:
+    payload = _parse(data)
+    return payload is not None and payload.get("t") == "ping"
+
+
 def _parse(data: str) -> dict | None:
     try:
         payload = json.loads(data)
@@ -272,7 +284,7 @@ async def headers(request: web.Request, handler):
     response.headers.setdefault("Cache-Control", "no-cache")
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Permissions-Policy"] = "microphone=(self), camera=(), geolocation=()"
+    response.headers["Permissions-Policy"] = "microphone=(self), camera=(self), geolocation=()"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         f"connect-src 'self' wss://{host} ws://{host}; "

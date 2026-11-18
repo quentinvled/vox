@@ -7,6 +7,7 @@
 
 const CLOSE_NOT_ALLOWED = 4003;
 const MAX_QUEUE_BYTES = 4 * 1024 * 1024;
+const PROBE_MS = 1500;
 
 export class Link extends EventTarget {
   constructor({ room, token, name }) {
@@ -22,10 +23,17 @@ export class Link extends EventTarget {
     this.queue = [];
     this.queued = 0;
     this.stopped = false;
+    this.probeTimer = 0;
   }
 
   get online() {
     return this.ready && this.computer.online;
+  }
+
+  // Connexion pas encore établie (ouverture de l'app, reprise) : on peut déjà
+  // préparer des messages, ils partiront dès qu'elle sera prête.
+  get pending() {
+    return !this.stopped && !this.ready;
   }
 
   connect() {
@@ -52,6 +60,7 @@ export class Link extends EventTarget {
       } catch {
         return;
       }
+      clearTimeout(this.probeTimer);
       this.receive(message);
     });
     socket.addEventListener("close", (event) => {
@@ -69,10 +78,12 @@ export class Link extends EventTarget {
   }
 
   receive(message) {
+    if (message.t === "pong") return;
     if (message.t === "ready") {
       this.ready = true;
       this.retry = 0;
       this.computer = message.computer;
+      if (!this.computer.online) this.dropQueue();
       this.emitStatus("open");
       this.flush();
     } else if (message.t === "computer") {
@@ -98,12 +109,26 @@ export class Link extends EventTarget {
   }
 
   // Retour au premier plan, réseau retrouvé : on n'attend pas le prochain essai.
+  // Une connexion qui semble ouverte peut être morte (téléphone en veille) :
+  // une sonde la vérifie et la remplace aussitôt si elle ne répond pas.
   wake() {
     if (this.stopped) return;
     this.retry = 0;
-    if (!this.socket || this.socket.readyState > WebSocket.OPEN) {
+    const socket = this.socket;
+    if (!socket || socket.readyState > WebSocket.OPEN) {
       this.connect();
+      return;
     }
+    if (socket.readyState !== WebSocket.OPEN || !this.ready) return;
+    clearTimeout(this.probeTimer);
+    socket.send(JSON.stringify({ t: "ping" }));
+    this.probeTimer = setTimeout(() => {
+      if (this.socket !== socket) return;
+      this.socket = null;
+      this.ready = false;
+      socket.close();
+      this.connect();
+    }, PROBE_MS);
   }
 
   close() {

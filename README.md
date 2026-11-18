@@ -144,8 +144,10 @@ Le téléphone devient un micro sans fil : tu parles dessus, le texte s'écrit s
 l'ordinateur, dans la fenêtre active, avec le même traitement qu'au clavier.
 
 1. Menu de l'icône → **Relier un téléphone…** : un code s'affiche.
-2. Scanne-le avec l'appareil photo du téléphone : la page **vox.vled.fr**
-   s'ouvre, déjà reliée. Ajoute-la à l'écran d'accueil pour l'ouvrir d'un geste.
+2. Ouvre **vox.vled.fr** sur le téléphone et ajoute-la à l'écran d'accueil,
+   puis touche **Scanner le code** dans l'app. (Scanner avec l'appareil photo
+   relie le navigateur, pas l'app installée : sur iPhone, les deux ne partagent
+   pas leur mémoire.)
 3. **Maintiens** le bouton pour parler, relâche pour envoyer. **Glisse vers le
    haut** pendant l'appui pour passer en mode consigne. Un **appui bref** lance
    une écoute libre : un nouvel appui envoie.

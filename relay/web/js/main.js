@@ -4,12 +4,28 @@
 //   appui long        parle tant que le doigt reste posé ;
 //   glisser vers le haut  bascule dictée ⇄ consigne pendant l'appui ;
 //   appui bref        écoute libre, un nouvel appui envoie.
+//
+// Ouverture « optimiste » : le dernier état connu de l'ordinateur s'affiche
+// tout de suite et le bouton répond avant même que la connexion soit établie ;
+// ce qui est dit part dès qu'elle l'est.
 
 import { Link } from "./link.js";
 import { Mic, micPermission } from "./mic.js";
-import { deviceName, forgetPairing, loadPairing } from "./pairing.js";
+import {
+  cachedComputer,
+  forgetPairing,
+  loadPairing,
+  pairingFromText,
+  quickDeviceName,
+  refreshDeviceName,
+  rememberComputer,
+  usePairing,
+} from "./pairing.js";
+import { Scanner } from "./scanner.js";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
+const OPTIMISTIC_MS = 3000;
+const MIC_KEY = "vox.micAllowed";
 const TAP_MS = 280;
 const SWIPE_PX = 56;
 const WORK_TIMEOUT_MS = 60000;
@@ -40,6 +56,13 @@ const ui = {
   bannerAction: $("#install-action"),
   bannerClose: $("#install-close"),
   welcomeLead: $("#welcome-lead"),
+  scan: $("#scan"),
+  scanVideo: $("#scan-video"),
+  scanHint: $("#scan-hint"),
+  scanClose: $("#scan-close"),
+  scanPaste: $("#scan-paste"),
+  scanInput: $("#scan-input"),
+  scanPasteToggle: $("#scan-paste-toggle"),
 };
 
 const LABELS = {
@@ -58,10 +81,13 @@ const state = {
   mode: "dictation", // mode de la prise en cours
   phase: "idle",
   capture: null,
-  micAllowed: false,
+  micAllowed: localStorage.getItem(MIC_KEY) === "1",
   link: null,
   mic: null,
-  timers: { hint: 0, work: 0, clock: 0, unpair: 0 },
+  scanner: null,
+  // Dernier état connu de l'ordinateur, affiché tant que la connexion s'établit.
+  optimistic: null,
+  timers: { hint: 0, work: 0, clock: 0, unpair: 0, optimistic: 0, scan: 0 },
   installPrompt: null,
   wakeLock: null,
 };
@@ -89,21 +115,29 @@ function setHint(text, quiet = false) {
   ui.hint.classList.toggle("is-quiet", quiet);
 }
 
+// Parler est possible si l'ordinateur est joignable, ou s'il l'était à la
+// dernière connexion et que celle-ci est en train de se rétablir.
+function canTalk() {
+  const link = state.link;
+  if (!link) return false;
+  return link.online || Boolean(state.optimistic?.online && link.pending);
+}
+
 function restingPhase() {
-  return state.link?.online ? "idle" : "offline";
+  return canTalk() ? "idle" : "offline";
 }
 
 function idleHint() {
   const link = state.link;
-  if (!link || !link.ready) return "Connexion…";
-  if (!link.computer.online) return "Ouvre Vox sur ton ordinateur";
+  if (!link || (!link.ready && !state.optimistic)) return "Connexion…";
+  if (!canTalk()) return "Ouvre Vox sur ton ordinateur";
   if (!state.micAllowed) return "Touche pour activer le micro";
   return "Maintiens pour parler";
 }
 
 function settle() {
   if (state.capture) return;
-  if (["working", "done", "review", "error"].includes(state.phase) && state.link?.online) {
+  if (["working", "done", "review", "error"].includes(state.phase) && canTalk()) {
     if (state.phase !== "working") setHint(idleHint(), state.phase === "done");
     return;
   }
@@ -132,12 +166,43 @@ function showTranscript(text, { pending = false } = {}) {
 }
 
 function renderLink({ link, computer }) {
+  if (link === "open") {
+    endOptimism();
+    rememberComputer(computer);
+    if (!computer.online && state.capture) {
+      // L'ordinateur s'est révélé absent pendant une prise lancée d'avance.
+      state.mic.cancel();
+      endCapture();
+      setMode(state.baseMode);
+    }
+  } else if (state.optimistic) {
+    // Reconnexion en cours : on garde l'affichage du dernier état connu.
+    computer = state.optimistic;
+    link = computer.online ? "open" : link;
+  }
   body.dataset.link = link === "open" && computer.online ? "online" : link === "open" ? "away" : link;
   ui.deviceName.textContent = computer.name || "Ordinateur";
   ui.sheetDevice.textContent = computer.name || "l’ordinateur";
   ui.deviceStatus.textContent =
     link !== "open" ? (link === "offline" ? "Pas de réseau" : "Connexion…") : computer.online ? "Connecté" : "Hors ligne";
   settle();
+}
+
+function beginOptimism() {
+  const known = state.optimistic ?? cachedComputer();
+  if (!known || state.link?.ready) return;
+  state.optimistic = known;
+  clearTimeout(state.timers.optimistic);
+  state.timers.optimistic = setTimeout(() => {
+    // La connexion traîne : on dit la vérité plutôt que de faire attendre.
+    endOptimism();
+    renderLink({ link: "connecting", computer: state.link.computer });
+  }, OPTIMISTIC_MS);
+}
+
+function endOptimism() {
+  clearTimeout(state.timers.optimistic);
+  state.optimistic = null;
 }
 
 function vibrate(pattern) {
@@ -188,9 +253,8 @@ function onPointerDown(event) {
     return;
   }
   if (state.phase === "working") return;
-  const link = state.link;
-  if (!link.online) {
-    setPhase(restingPhase(), link.ready ? "Ouvre Vox sur ton ordinateur" : "Connexion…");
+  if (!canTalk()) {
+    setPhase(restingPhase(), state.link.ready ? "Ouvre Vox sur ton ordinateur" : "Connexion…");
     vibrate(30);
     return;
   }
@@ -218,7 +282,7 @@ function onPointerDown(event) {
   setHint("Activation du micro…");
   preparing.then(
     () => {
-      state.micAllowed = true;
+      allowMic();
       if (state.capture !== capture) return;
       if (!wasAllowed) {
         // Ce geste a servi à autoriser le micro : la prochaine prise sera la bonne.
@@ -239,6 +303,11 @@ function onPointerDown(event) {
       vibrate([30, 60, 30]);
     },
   );
+}
+
+function allowMic() {
+  state.micAllowed = true;
+  localStorage.setItem(MIC_KEY, "1");
 }
 
 function begin(capture) {
@@ -492,6 +561,79 @@ async function onSheetInstall() {
   ui.sheetInstallNote.hidden = false;
 }
 
+// ---------------------------------------------------------------------
+// Scanner intégré
+// ---------------------------------------------------------------------
+async function openScanner() {
+  if (!ui.sheet.hidden) closeSheet();
+  ui.scan.hidden = false;
+  ui.scan.classList.remove("is-found", "is-blind");
+  ui.scanPaste.hidden = true;
+  ui.scanPasteToggle.hidden = false;
+  scanHint("Vise le code affiché par Vox sur l’ordinateur");
+  state.scanner = new Scanner(ui.scanVideo, onScanned);
+  try {
+    await state.scanner.start();
+  } catch (error) {
+    ui.scan.classList.add("is-blind");
+    scanHint(
+      error.kind === "denied"
+        ? "Caméra refusée. Colle le lien copié dans Vox (« Copier le lien »)."
+        : "Caméra indisponible. Colle le lien copié dans Vox (« Copier le lien »).",
+      true,
+    );
+    showPaste();
+  }
+}
+
+function closeScanner() {
+  state.scanner?.stop();
+  state.scanner = null;
+  clearTimeout(state.timers.scan);
+  ui.scan.hidden = true;
+}
+
+function scanHint(text, alert = false) {
+  ui.scanHint.textContent = text;
+  ui.scanHint.classList.toggle("is-alert", alert);
+}
+
+function showPaste() {
+  ui.scanPaste.hidden = false;
+  ui.scanPasteToggle.hidden = true;
+  ui.scanInput.focus();
+}
+
+function onScanned(text) {
+  const pairing = pairingFromText(text);
+  if (!pairing) {
+    scanHint("Ce code n’est pas un code Vox", true);
+    clearTimeout(state.timers.scan);
+    state.timers.scan = setTimeout(() => scanHint("Vise le code affiché par Vox sur l’ordinateur"), 1800);
+    return false;
+  }
+  state.scanner?.stop();
+  ui.scan.classList.add("is-found");
+  scanHint("Code reconnu");
+  vibrate(20);
+  // L'ancien appairage est rendu à l'ordinateur précédent avant de partir.
+  if (state.link?.online) state.link.send({ t: "unpair" });
+  setTimeout(() => usePairing(pairing), 380);
+  return true;
+}
+
+function wireScanner() {
+  for (const button of document.querySelectorAll("[data-scan]")) {
+    button.addEventListener("click", openScanner);
+  }
+  ui.scanClose.addEventListener("click", closeScanner);
+  ui.scanPasteToggle.addEventListener("click", showPaste);
+  ui.scanPaste.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!onScanned(ui.scanInput.value)) ui.scanInput.select();
+  });
+}
+
 function showWelcome(alert) {
   body.dataset.screen = "welcome";
   if (alert) {
@@ -535,9 +677,12 @@ function wire() {
     if (document.hidden) {
       if (state.capture) cancel();
       state.mic.release();
-    } else {
-      state.link?.wake();
+      return;
     }
+    // Retour au premier plan : prêt tout de suite, vérification en fond.
+    if (state.link && !state.link.ready) beginOptimism();
+    state.link?.wake();
+    if (state.micAllowed) state.mic.warm();
   });
   window.addEventListener("online", () => state.link?.wake());
   window.addEventListener("offline", () => renderLink({ link: "offline", computer: state.link.computer }));
@@ -552,6 +697,7 @@ async function start() {
 
   // Un nouveau code scanné alors que la page est déjà ouverte.
   window.addEventListener("hashchange", () => location.reload());
+  wireScanner();
 
   const pairing = loadPairing();
   if (!pairing) {
@@ -559,12 +705,12 @@ async function start() {
     return;
   }
 
-  state.micAllowed = (await micPermission()) === "granted";
+  // Rien n'est attendu avant de se connecter : nom et micro se précisent en fond.
   state.mic = new Mic({
     onChunk: (pcm) => state.link.send(pcm, { queue: true }),
     onLevel: renderLevel,
   });
-  state.link = new Link({ ...pairing, name: await deviceName() });
+  state.link = new Link({ ...pairing, name: quickDeviceName() });
   state.link.addEventListener("status", ({ detail }) => renderLink(detail));
   state.link.addEventListener("message", onMessage);
   state.link.addEventListener("revoked", () => {
@@ -572,12 +718,25 @@ async function start() {
     forgetPairing();
     showWelcome("Ce téléphone n’est plus relié.");
   });
+  state.link.connect();
 
   wire();
   setupInstall();
   body.dataset.screen = "app";
-  setPhase("offline", "Connexion…");
-  state.link.connect();
+  beginOptimism();
+  renderLink({ link: "connecting", computer: state.link.computer });
+
+  refreshDeviceName();
+  micPermission().then((permission) => {
+    if (permission === "granted") {
+      allowMic();
+      state.mic.warm();
+    } else if (permission === "prompt" || permission === "denied") {
+      state.micAllowed = false;
+      localStorage.removeItem(MIC_KEY);
+    }
+    settle();
+  });
 }
 
 start();

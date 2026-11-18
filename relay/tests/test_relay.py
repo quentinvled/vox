@@ -170,3 +170,10 @@ def test_registry_releases_empty_rooms() -> None:
     assert registry.open("b" * 22) is None
     registry.release(room)
     assert len(registry) == 0
+
+
+async def test_ping_is_answered_even_while_waiting(client) -> None:
+    phone = await _phone(client, room_for_secret(_token()), _token())
+    await _json(phone)
+    await phone.send_json({"t": "ping"})
+    assert await _json(phone) == {"t": "pong"}

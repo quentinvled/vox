@@ -211,7 +211,10 @@ class PhoneWindow(QWidget):
         layout.setSpacing(14)
         self.qr = QrCode()
         layout.addWidget(self.qr, 0, Qt.AlignHCenter)
-        caption = QLabel("Scanne ce code avec l’appareil photo du téléphone.")
+        caption = QLabel(
+            "Scanne ce code depuis l’app Vox du téléphone, ou avec l’appareil photo la "
+            "première fois."
+        )
         caption.setObjectName("phoneCaption")
         caption.setAlignment(Qt.AlignCenter)
         caption.setWordWrap(True)
