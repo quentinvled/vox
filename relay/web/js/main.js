@@ -23,7 +23,7 @@ import {
 } from "./pairing.js";
 import { Scanner } from "./scanner.js";
 
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 const OPTIMISTIC_MS = 3000;
 const MIC_KEY = "vox.micAllowed";
 const TAP_MS = 280;
@@ -692,6 +692,12 @@ async function start() {
   ui.sheetMeta.textContent = `Vox · version ${VERSION}`;
   setMode("dictation");
   if ("serviceWorker" in navigator) {
+    // Une nouvelle version vient de prendre la main : on recharge pour ne
+    // garder qu'une seule version en mémoire (sauf en pleine prise de parole).
+    const updating = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (updating && !state.capture && state.phase !== "working") location.reload();
+    });
     navigator.serviceWorker.register("/sw.js").catch(() => {});
   }
 

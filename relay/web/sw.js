@@ -1,8 +1,13 @@
-// Service worker : la page s'ouvre instantanément depuis le cache, puis se
-// met à jour en arrière-plan (la nouvelle version sert à l'ouverture suivante).
+// Service worker : la page s'ouvre instantanément depuis le cache.
+//
+// Chaque version de la page a son propre cache (CACHE), rempli en entier à
+// l'installation, directement depuis le serveur. La nouvelle version prend la
+// main d'un bloc (la page se recharge alors, voir main.js) : jamais de mélange
+// entre fichiers d'anciennes et de nouvelles versions.
+// À chaque modification de web/ : augmenter CACHE (et VERSION dans main.js).
 // Le canal /ws et /healthz ne passent jamais par le cache.
 
-const CACHE = "vox-1.1.0";
+const CACHE = "vox-1.1.1";
 const SHELL = [
   "/",
   "/app.css",
@@ -21,7 +26,10 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
+  // « reload » : ignore le cache HTTP du navigateur (Cloudflare y autorise 4 h).
+  event.waitUntil(
+    caches.open(CACHE).then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: "reload" })))),
+  );
   self.skipWaiting();
 });
 
@@ -45,17 +53,10 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(key);
-      const network = fetch(request)
-        .then((response) => {
-          if (response.ok) cache.put(key, response.clone());
-          return response;
-        })
-        .catch(() => cached);
-      if (cached) {
-        event.waitUntil(network);
-        return cached;
-      }
-      return network;
+      if (cached) return cached;
+      const response = await fetch(key === "/" ? "/" : request.url, { cache: "no-cache" });
+      if (response.ok) cache.put(key, response.clone());
+      return response;
     }),
   );
 });
