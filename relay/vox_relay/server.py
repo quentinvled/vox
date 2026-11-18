@@ -282,6 +282,11 @@ async def headers(request: web.Request, handler):
         return response
     host = request.host
     response.headers.setdefault("Cache-Control", "no-cache")
+    if request.path == "/sw.js":
+        # Le cache applicatif reste instantané, mais son programme de mise à
+        # jour doit être revérifié même par les anciennes installations.
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Cloudflare-CDN-Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "microphone=(self), camera=(self), geolocation=()"

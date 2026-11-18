@@ -23,12 +23,14 @@ export class Scanner {
     this.worker = null;
     this.canvas = null;
     this.running = false;
+    this.closed = false;
     this.timer = 0;
   }
 
   async start() {
+    let stream;
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
       });
@@ -36,8 +38,13 @@ export class Scanner {
       const denied = error && (error.name === "NotAllowedError" || error.name === "SecurityError");
       throw new ScanError(denied ? "denied" : "unavailable");
     }
-    this.video.srcObject = this.stream;
-    await this.video.play().catch(() => {});
+    if (this.closed) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    this.stream = stream;
+    this.video.srcObject = stream;
+    await this.video.play();
 
     if ("BarcodeDetector" in window) {
       try {
@@ -47,6 +54,7 @@ export class Scanner {
         this.detector = null;
       }
     }
+    if (this.closed) return;
     if (!this.detector) {
       this.worker = new Worker("/js/scan-worker.js");
       this.canvas = document.createElement("canvas");
@@ -92,6 +100,7 @@ export class Scanner {
   }
 
   stop() {
+    this.closed = true;
     this.running = false;
     clearTimeout(this.timer);
     this.worker?.terminate();

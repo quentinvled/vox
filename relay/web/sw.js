@@ -7,11 +7,11 @@
 // À chaque modification de web/ : augmenter CACHE (et VERSION dans main.js).
 // Le canal /ws et /healthz ne passent jamais par le cache.
 
-const CACHE = "vox-1.1.1";
+const CACHE = "vox-1.1.2";
 const SHELL = [
   "/",
   "/app.css",
-  "/js/main.js",
+  "/js/main.js?v=1.1.2",
   "/js/link.js",
   "/js/mic.js",
   "/js/pairing.js",
@@ -49,7 +49,7 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname === "/ws" || url.pathname === "/healthz") return;
 
   // Toute navigation sert la page unique (l'adresse porte le fragment d'appairage).
-  const key = request.mode === "navigate" ? "/" : url.pathname;
+  const key = request.mode === "navigate" ? "/" : url.pathname + url.search;
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(key);

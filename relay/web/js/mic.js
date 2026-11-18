@@ -23,6 +23,7 @@ export class Mic {
     this.pending = null;
     this.ending = null;
     this.idleTimer = 0;
+    this.generation = 0;
   }
 
   get ready() {
@@ -61,12 +62,15 @@ export class Mic {
   }
 
   async open() {
+    const generation = this.generation;
     if (this.pendingStream) await this.pendingStream;
+    if (generation !== this.generation) throw new MicError("unavailable", "Micro libéré.");
     if (!this.stream?.active) await this.acquire();
     await this.build();
   }
 
   async acquire() {
+    const generation = this.generation;
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -81,6 +85,10 @@ export class Mic {
       const denied = error && (error.name === "NotAllowedError" || error.name === "SecurityError");
       throw new MicError(denied ? "denied" : "unavailable", error && error.message);
     }
+    if (generation !== this.generation) {
+      for (const track of stream.getTracks()) track.stop();
+      throw new MicError("unavailable", "Micro libéré.");
+    }
     for (const track of stream.getTracks()) {
       track.addEventListener("ended", () => this.release());
     }
@@ -92,6 +100,7 @@ export class Mic {
     const context = this.context;
     if (!this.moduleLoaded) {
       await context.audioWorklet.addModule("/js/capture-worklet.js");
+      if (this.context !== context) throw new MicError("unavailable", "Micro libéré.");
       this.moduleLoaded = true;
     }
     const source = context.createMediaStreamSource(stream);
@@ -156,6 +165,7 @@ export class Mic {
   }
 
   release() {
+    this.generation += 1;
     clearTimeout(this.idleTimer);
     this.capturing = false;
     this.ending = null;

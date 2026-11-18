@@ -23,7 +23,7 @@ import {
 } from "./pairing.js";
 import { Scanner } from "./scanner.js";
 
-const VERSION = "1.1.1";
+const VERSION = "1.1.2";
 const OPTIMISTIC_MS = 3000;
 const MIC_KEY = "vox.micAllowed";
 const TAP_MS = 280;
@@ -565,16 +565,26 @@ async function onSheetInstall() {
 // Scanner intégré
 // ---------------------------------------------------------------------
 async function openScanner() {
+  if (state.scanner) return;
+  if (state.capture) cancel();
+  if (state.phase !== "working") state.mic?.release();
   if (!ui.sheet.hidden) closeSheet();
   ui.scan.hidden = false;
   ui.scan.classList.remove("is-found", "is-blind");
   ui.scanPaste.hidden = true;
   ui.scanPasteToggle.hidden = false;
-  scanHint("Vise le code affiché par Vox sur l’ordinateur");
-  state.scanner = new Scanner(ui.scanVideo, onScanned);
+  scanHint("Ouverture de la caméra… Autorise l’accès si ton téléphone te le demande.");
+  const scanner = new Scanner(ui.scanVideo, onScanned);
+  state.scanner = scanner;
+  const timeout = setTimeout(() => {
+    if (state.scanner === scanner) scanHint("Caméra en attente. Tu peux aussi coller le lien d’appairage.");
+  }, 3500);
   try {
-    await state.scanner.start();
+    await scanner.start();
+    if (state.scanner === scanner) scanHint("Vise le code affiché par Vox sur l’ordinateur");
   } catch (error) {
+    if (state.scanner !== scanner) return;
+    scanner.stop();
     ui.scan.classList.add("is-blind");
     scanHint(
       error.kind === "denied"
@@ -583,6 +593,8 @@ async function openScanner() {
       true,
     );
     showPaste();
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -617,7 +629,9 @@ function onScanned(text) {
   scanHint("Code reconnu");
   vibrate(20);
   // L'ancien appairage est rendu à l'ordinateur précédent avant de partir.
-  if (state.link?.online) state.link.send({ t: "unpair" });
+  if (state.link?.online && (state.link.room !== pairing.room || state.link.token !== pairing.token)) {
+    state.link.send({ t: "unpair" });
+  }
   setTimeout(() => usePairing(pairing), 380);
   return true;
 }
@@ -632,6 +646,7 @@ function wireScanner() {
     event.preventDefault();
     if (!onScanned(ui.scanInput.value)) ui.scanInput.select();
   });
+  window.addEventListener("pagehide", closeScanner);
 }
 
 function showWelcome(alert) {
@@ -682,7 +697,7 @@ function wire() {
     // Retour au premier plan : prêt tout de suite, vérification en fond.
     if (state.link && !state.link.ready) beginOptimism();
     state.link?.wake();
-    if (state.micAllowed) state.mic.warm();
+    if (state.micAllowed && !state.scanner) state.mic.warm();
   });
   window.addEventListener("online", () => state.link?.wake());
   window.addEventListener("offline", () => renderLink({ link: "offline", computer: state.link.computer }));
@@ -698,7 +713,7 @@ async function start() {
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       if (updating && !state.capture && state.phase !== "working") location.reload();
     });
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => {});
   }
 
   // Un nouveau code scanné alors que la page est déjà ouverte.
@@ -736,7 +751,7 @@ async function start() {
   micPermission().then((permission) => {
     if (permission === "granted") {
       allowMic();
-      state.mic.warm();
+      if (!state.scanner && !document.hidden) state.mic.warm();
     } else if (permission === "prompt" || permission === "denied") {
       state.micAllowed = false;
       localStorage.removeItem(MIC_KEY);
