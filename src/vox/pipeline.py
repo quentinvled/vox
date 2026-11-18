@@ -85,6 +85,9 @@ class Pipeline(QObject):
         self._target_window = 0
         self._cached_client = None
         self._cached_signature: tuple | None = None
+        # Source de la prise en cours : le micro de l'ordinateur, ou un flux
+        # recu du telephone (voir phone.py). Meme interface dans les deux cas.
+        self._source = self.recorder
 
     # ------------------------------------------------------------------
     # Etat
@@ -96,6 +99,11 @@ class Pipeline(QObject):
     @property
     def busy(self) -> bool:
         return self._busy
+
+    @property
+    def source(self):
+        """Enregistreur de la prise en cours (micro local ou telephone)."""
+        return self._source
 
     @property
     def mode(self) -> str:
@@ -123,17 +131,20 @@ class Pipeline(QObject):
     # ------------------------------------------------------------------
     # Enregistrement
     # ------------------------------------------------------------------
-    def start_recording(self) -> None:
+    def start_recording(self, source=None) -> bool:
+        """Demarre une prise ; `source` remplace le micro (dictee du telephone)."""
         if self._recording:
-            return
+            return False
         if self._busy:
             self._notify("info", "Transcription en cours…")
-            return
+            return False
+        source = source or self.recorder
         try:
-            self.recorder.start()
+            source.start()
         except RecorderError as exc:
             self._fail(str(exc))
-            return
+            return False
+        self._source = source
         # Chaque prise repart en dictée : la consigne est un geste ponctuel.
         self.set_mode("dictation")
         self._recording = True
@@ -141,12 +152,14 @@ class Pipeline(QObject):
         self.status_changed.emit("recording")
         if self.settings.sounds:
             sounds.play("start")
+        return True
 
     def stop_recording(self) -> None:
         if not self._recording:
             return
-        wav = self.recorder.stop()
-        had_sound = self.recorder.has_speech
+        source = self._source
+        wav = source.stop()
+        had_sound = source.has_speech
         # On note la fenetre active maintenant : c'est la ou le texte devra
         # atterrir. La comparaison apres insertion detecte une perte de focus.
         self._target_window = _foreground_id()
@@ -155,7 +168,7 @@ class Pipeline(QObject):
         if self.settings.sounds:
             sounds.play("stop")
 
-        duration = len(wav) / (self.settings.sample_rate * 2) if wav else 0.0
+        duration = len(wav) / (source.samplerate * 2) if wav else 0.0
         # Le WAV part sur le disque avant tout appel reseau : rien n'est perdu
         # si la transcription echoue.
         audio = ""
@@ -184,7 +197,7 @@ class Pipeline(QObject):
         """Abandon silencieux (autre touche pressee pendant la combinaison)."""
         if not self._recording:
             return
-        self.recorder.cancel()
+        self._source.cancel()
         self._recording = False
         self.recording_changed.emit(False)
         self.status_changed.emit("cancelled")

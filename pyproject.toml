@@ -17,6 +17,7 @@ dependencies = [
     # Son du systeme (WASAPI loopback) et applications qui jouent du son.
     "pycaw>=20240210; sys_platform == 'win32'",
     "pyaudiowpatch>=0.2.12.8; sys_platform == 'win32'",
+    "segno>=1.6.6",
 ]
 
 [project.scripts]
@@ -65,6 +66,8 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 "src/vox/library.py" = ["DTZ005"]
 # Nom de fichier et titre des appels enregistres : heure locale voulue.
 "src/vox/app.py" = ["DTZ005"]
+# Date d'appairage d'un telephone : heure locale, affichee telle quelle.
+"src/vox/phone.py" = ["DTZ005"]
 # Les commandes ffmpeg sont passees en liste d'arguments, sans shell, avec un
 # chemin resolu par imageio-ffmpeg (voir audiofiles.py).
 "src/vox/audiofiles.py" = ["S603", "S607"]

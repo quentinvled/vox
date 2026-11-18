@@ -252,6 +252,12 @@ def paste_text(text: str, paste_keys: str = "ctrl+v", restore: bool = True) -> N
             set_clipboard_text(previous)
 
 
+
+def press_keys(combo: str) -> None:
+    """Envoie une combinaison de touches (« ctrl+z »…) a la fenetre active."""
+    _send(_combo_items(combo))
+
+
 def press_enter() -> None:
     _send([_key_event(vk=VK_RETURN), _key_event(vk=VK_RETURN, flags=KEYEVENTF_KEYUP)])
 

@@ -138,6 +138,26 @@ clé reste indispensable pour transcrire ou reformuler.
 En cas de coupure, Vox garde la dernière liste enregistrée. L'onglet **Importer**
 reste lié aux modèles OpenRouter, même si la dictée utilise un autre fournisseur.
 
+## Dicter depuis le téléphone
+
+Le téléphone devient un micro sans fil : tu parles dessus, le texte s'écrit sur
+l'ordinateur, dans la fenêtre active, avec le même traitement qu'au clavier.
+
+1. Menu de l'icône → **Relier un téléphone…** : un code s'affiche.
+2. Scanne-le avec l'appareil photo du téléphone : la page **vox.vled.fr**
+   s'ouvre, déjà reliée. Ajoute-la à l'écran d'accueil pour l'ouvrir d'un geste.
+3. **Maintiens** le bouton pour parler, relâche pour envoyer. **Glisse vers le
+   haut** pendant l'appui pour passer en mode consigne. Un **appui bref** lance
+   une écoute libre : un nouvel appui envoie.
+4. Après l'insertion, **Entrée** valide (envoyer un message) et **Annuler**
+   défait l'insertion, depuis le téléphone.
+
+Ça marche en Wi-Fi comme en 4G/5G : téléphone et ordinateur passent par le
+relais `vox.vled.fr`, qui transmet sans rien conserver. La transcription reste
+faite par Vox sur l'ordinateur, avec ta clé et tes réglages. Les téléphones
+reliés se retirent depuis la même fenêtre. Détails et protocole :
+[`relay/README.md`](relay/README.md).
+
 ## Où sont rangés les appels et les imports
 
 Les enregistrements d'appels et les transcriptions d'imports vivent dans un
@@ -185,7 +205,8 @@ Tout est local :
 - Linux : `~/.local/share/Vox`
 
 Seul l'audio de chaque dictée est envoyé au service de transcription choisi,
-via OpenRouter.
+via OpenRouter. Une dictée faite depuis le téléphone transite en plus par le
+relais `vox.vled.fr`, sans y être conservée.
 
 ## Développement
 

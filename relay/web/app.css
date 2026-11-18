@@ -1,0 +1,867 @@
+/* Vox — télécommande vocale.
+   Une seule feuille, sans dépendance. Les états viennent des attributs du
+   <body> : data-screen, data-mode (dictation|instruction), data-phase
+   (idle|offline|listening|working|done|review|error). */
+
+:root {
+  --bg: #07080b;
+  --surface: #101217;
+  --surface-2: #161920;
+  --surface-3: #1d2029;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.12);
+  --text: #f2f4f8;
+  --muted: #8b92a1;
+  --faint: #565c69;
+  --ok: #3ecf8e;
+  --warn: #f0b24a;
+  --danger: #f2646d;
+
+  /* Couleurs de la marque (icône de Vox). */
+  --a1: #5b4fe8;
+  --a2: #3f7ef0;
+  --a3: #35c8f5;
+  --accent: #6d9dfb;
+  --glow: 63, 126, 240;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --level: 0;
+  --talk: min(188px, 46vw);
+
+  color-scheme: dark;
+}
+
+body[data-mode="instruction"] {
+  --a1: #6a3cf0;
+  --a2: #9a5cf7;
+  --a3: #d19bff;
+  --accent: #b996ff;
+  --glow: 154, 92, 247;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(110% 55% at 50% 108%, rgba(var(--glow), 0.13), transparent 62%),
+    var(--bg);
+  color: var(--text);
+  font: 400 16px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
+  transition: background-color 0.4s var(--ease);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* Écrans                                                              */
+/* ------------------------------------------------------------------ */
+.welcome,
+.app {
+  display: none;
+  height: 100%;
+  padding:
+    max(18px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+    max(18px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+}
+
+body[data-screen="welcome"] .welcome,
+body[data-screen="app"] .app {
+  display: flex;
+  animation: rise 0.5s var(--ease) both;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Accueil (non relié)                                                 */
+/* ------------------------------------------------------------------ */
+.welcome {
+  flex-direction: column;
+  justify-content: center;
+  max-width: 420px;
+  margin: 0 auto;
+  gap: 14px;
+}
+
+.welcome-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  box-shadow: 0 18px 50px -12px rgba(63, 126, 240, 0.55);
+  margin-bottom: 10px;
+}
+
+.welcome h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.welcome-lead {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 17px;
+  max-width: 30ch;
+}
+
+.welcome-lead.is-alert {
+  color: var(--warn);
+}
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  border-top: 1px solid var(--line);
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.steps p {
+  margin: 0;
+}
+
+.steps b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.steps span {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ */
+/* En-tête                                                             */
+/* ------------------------------------------------------------------ */
+.app {
+  flex-direction: column;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.device {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.device-text {
+  display: grid;
+  min-width: 0;
+}
+
+.device-text strong {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.device-text span {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+  flex: none;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+body[data-link="online"] .dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px rgba(62, 207, 142, 0.14);
+}
+
+body[data-link="connecting"] .dot {
+  background: var(--warn);
+  animation: blink 1.2s ease-in-out infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0.35; }
+}
+
+.icon-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  transition: background 0.2s, color 0.2s;
+}
+
+.icon-button:active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.icon-button svg circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.icon-button.small {
+  width: 32px;
+  height: 32px;
+}
+
+.icon-button.small svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Bandeau d'installation                                              */
+/* ------------------------------------------------------------------ */
+.banner {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 6px 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+.banner p {
+  margin: 0;
+  flex: 1;
+}
+
+.banner b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.banner-action {
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ */
+/* Texte transmis                                                      */
+/* ------------------------------------------------------------------ */
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 18px;
+  padding: 24px 2px 8px;
+}
+
+.transcript {
+  margin: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  font-size: clamp(21px, 5.6vw, 26px);
+  line-height: 1.38;
+  letter-spacing: -0.012em;
+  font-weight: 500;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+  padding-top: 28px;
+  transition: color 0.3s;
+}
+
+.transcript.is-empty {
+  color: var(--faint);
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.transcript.is-pending {
+  color: var(--muted);
+}
+
+.transcript.is-new {
+  animation: settle 0.45s var(--ease) both;
+}
+
+@keyframes settle {
+  from { opacity: 0; transform: translateY(6px); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  min-height: 40px;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.25s var(--ease), transform 0.25s var(--ease);
+}
+
+body[data-phase="done"] .actions,
+body[data-phase="review"] .actions {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 40px;
+  padding: 0 15px 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  font-size: 14.5px;
+  font-weight: 500;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.chip svg {
+  width: 17px;
+  height: 17px;
+  color: var(--muted);
+}
+
+.chip:active {
+  background: var(--surface-3);
+  transform: scale(0.97);
+}
+
+.chip.accent {
+  border-color: transparent;
+  background: var(--text);
+  color: var(--bg);
+}
+
+.chip.accent svg {
+  color: var(--bg);
+}
+
+.chip[data-action="reinsert"],
+body[data-phase="review"] .chip[data-action="undo"] {
+  display: none;
+}
+
+body[data-phase="review"] .chip[data-action="reinsert"] {
+  display: inline-flex;
+}
+
+.chip.is-sent {
+  border-color: rgba(62, 207, 142, 0.35);
+}
+
+.chip.is-sent svg {
+  color: var(--ok);
+}
+
+/* ------------------------------------------------------------------ */
+/* Commandes du bas                                                    */
+/* ------------------------------------------------------------------ */
+.dock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  padding-top: 18px;
+}
+
+.modes {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 228px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.modes button {
+  position: relative;
+  z-index: 1;
+  height: 34px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  transition: color 0.25s;
+}
+
+.modes button[aria-checked="true"] {
+  color: var(--text);
+}
+
+body[data-mode="instruction"] .modes button[aria-checked="true"] {
+  color: #e3d4ff;
+}
+
+.modes-thumb {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border-radius: 999px;
+  background: var(--surface-3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: transform 0.35s var(--ease), background 0.35s;
+}
+
+body[data-mode="instruction"] .modes-thumb {
+  transform: translateX(100%);
+  background: rgba(154, 92, 247, 0.22);
+}
+
+/* ------------------------------------------------------------------ */
+/* Bouton parler                                                       */
+/* ------------------------------------------------------------------ */
+.talk-area {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.talk {
+  position: relative;
+  width: var(--talk);
+  height: var(--talk);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, var(--surface-3), var(--surface-2));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 0 0 1px var(--line),
+    0 24px 60px -24px rgba(0, 0, 0, 0.9);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform 0.35s var(--ease), opacity 0.3s;
+}
+
+.talk:focus-visible {
+  outline-offset: 6px;
+}
+
+.talk-fill,
+.talk-glow,
+.talk-spin {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.talk-fill {
+  background: linear-gradient(140deg, var(--a1), var(--a2) 55%, var(--a3));
+  opacity: 0;
+  transition: opacity 0.25s var(--ease);
+}
+
+.talk-glow {
+  background: radial-gradient(closest-side, rgba(var(--glow), 0.55), rgba(var(--glow), 0));
+  opacity: 0;
+  transform: scale(calc(1.05 + var(--level) * 0.45));
+  transition: opacity 0.3s var(--ease);
+  z-index: -1;
+}
+
+.talk-spin {
+  inset: -3px;
+  background: conic-gradient(from 0deg, transparent 0 62%, rgba(var(--glow), 0.95) 92%, transparent 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.bars {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--talk) * 0.045);
+  height: calc(var(--talk) * 0.38);
+}
+
+.bars i {
+  --h: 0.4;
+  display: block;
+  width: calc(var(--talk) * 0.055);
+  height: 100%;
+  border-radius: 999px;
+  background: var(--text);
+  transform: scaleY(var(--h));
+  transition: transform 0.09s linear, background 0.3s;
+}
+
+/* Silhouette de l'icône de Vox au repos. */
+.bars i:nth-child(1) { --h: 0.38; }
+.bars i:nth-child(2) { --h: 0.7; }
+.bars i:nth-child(3) { --h: 1; }
+.bars i:nth-child(4) { --h: 0.7; }
+.bars i:nth-child(5) { --h: 0.44; }
+
+/* À l'écoute : le bouton prend la couleur du mode et vit avec la voix. */
+body[data-phase="listening"] .talk {
+  transform: scale(1.06);
+}
+
+body[data-phase="listening"] .talk-fill,
+body[data-phase="listening"] .talk-glow {
+  opacity: 1;
+}
+
+body[data-phase="listening"] .bars i {
+  --h: var(--bar, 0.18);
+}
+
+/* Traitement : vague régulière et anneau qui tourne. */
+body[data-phase="working"] .talk-spin {
+  opacity: 1;
+  animation: spin 1.1s linear infinite;
+}
+
+body[data-phase="working"] .bars i {
+  animation: wave 1s var(--ease) infinite;
+}
+
+.bars i:nth-child(2) { animation-delay: 0.1s !important; }
+.bars i:nth-child(3) { animation-delay: 0.2s !important; }
+.bars i:nth-child(4) { animation-delay: 0.3s !important; }
+.bars i:nth-child(5) { animation-delay: 0.4s !important; }
+
+@keyframes spin {
+  to { transform: rotate(1turn); }
+}
+
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.22); }
+  45% { transform: scaleY(0.78); }
+}
+
+body[data-phase="done"] .talk {
+  animation: done 0.6s var(--ease);
+}
+
+@keyframes done {
+  30% { box-shadow: inset 0 0 0 2px rgba(62, 207, 142, 0.85), 0 0 0 10px rgba(62, 207, 142, 0.08); }
+}
+
+body[data-phase="offline"] .talk {
+  opacity: 0.35;
+}
+
+body[data-phase="error"] .talk {
+  animation: nudge 0.4s var(--ease);
+}
+
+@keyframes nudge {
+  25% { transform: translateX(-6px); }
+  60% { transform: translateX(5px); }
+}
+
+/* Pendant l'appui, le sélecteur s'efface : l'indication « glisse vers le
+   haut » prend sa place. */
+.modes {
+  transition: opacity 0.2s var(--ease), transform 0.25s var(--ease);
+}
+
+body[data-holding="true"] .modes {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  pointer-events: none;
+}
+
+.cue {
+  position: absolute;
+  bottom: calc(100% + 34px);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.2s, transform 0.25s var(--ease), color 0.2s;
+  pointer-events: none;
+}
+
+.cue svg {
+  width: 15px;
+  height: 15px;
+}
+
+body[data-holding="true"] .cue {
+  opacity: 1;
+  transform: none;
+}
+
+body[data-holding="true"][data-mode="instruction"] .cue {
+  color: #e3d4ff;
+}
+
+body[data-holding="true"][data-mode="instruction"] .cue svg {
+  transform: rotate(180deg);
+}
+
+/* ------------------------------------------------------------------ */
+/* Ligne d'état                                                        */
+/* ------------------------------------------------------------------ */
+.hint-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 24px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 15px;
+  color: var(--muted);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-phase="listening"] .hint {
+  color: var(--text);
+}
+
+body[data-phase="done"] .hint {
+  color: var(--ok);
+}
+
+body[data-phase="error"] .hint,
+body[data-phase="review"] .hint {
+  color: var(--warn);
+}
+
+.hint.is-quiet {
+  color: var(--muted) !important;
+}
+
+.hint-cancel {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------------ */
+/* Feuille d'options                                                   */
+/* ------------------------------------------------------------------ */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  animation: fade 0.25s var(--ease) both;
+}
+
+.sheet-panel {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  padding: 10px 16px max(18px, env(safe-area-inset-bottom));
+  border-radius: 22px 22px 0 0;
+  background: var(--surface);
+  border-top: 1px solid var(--line-strong);
+  animation: slide 0.35s var(--ease) both;
+}
+
+.sheet.is-closing .sheet-backdrop {
+  animation: fade 0.2s var(--ease) reverse both;
+}
+
+.sheet.is-closing .sheet-panel {
+  animation: slide 0.22s var(--ease) reverse both;
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+}
+
+@keyframes slide {
+  from { transform: translateY(100%); }
+}
+
+.sheet-grabber {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 16px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+
+.sheet-title {
+  margin: 0 6px 12px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.sheet-title b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sheet-list {
+  display: grid;
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 16px;
+  text-align: left;
+  font-size: 16px;
+}
+
+.sheet-item + .sheet-item,
+.sheet-note + .sheet-item {
+  border-top: 1px solid var(--line);
+}
+
+.sheet-item svg {
+  color: var(--muted);
+}
+
+.sheet-item:active {
+  background: var(--surface-3);
+}
+
+.sheet-item.danger,
+.sheet-item.danger svg {
+  color: var(--danger);
+}
+
+.sheet-note {
+  margin: 0;
+  padding: 0 16px 14px 48px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.sheet-note b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sheet-meta {
+  margin: 14px 6px 0;
+  font-size: 12.5px;
+  color: var(--faint);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-height: 640px) {
+  :root { --talk: min(150px, 40vw); }
+  .dock { gap: 16px; }
+}

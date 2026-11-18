@@ -42,6 +42,9 @@ DEFAULT_MANIFEST_URL = (
     "https://github.com/quentinvled/vox/releases/latest/download/version.json"
 )
 
+# Relais de la dictee depuis le telephone (voir phone.py et relay/).
+DEFAULT_PHONE_RELAY = "wss://vox.vled.fr/ws"
+
 # Cle d'environnement / champ de settings associe a chaque fournisseur.
 ENV_KEYS: dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
@@ -170,6 +173,13 @@ class Settings:
     auto_update: bool = False
     update_manifest_url: str = DEFAULT_MANIFEST_URL
     show_overlay_on_result: bool = True
+
+    # --- Telephone (dictee a distance, voir phone.py) ---
+    phone_relay_url: str = DEFAULT_PHONE_RELAY
+    # Secret de cet ordinateur aupres du relais ("" tant qu'aucun telephone).
+    phone_secret: str = ""
+    # Telephones relies : {"id": empreinte du jeton, "name": ..., "added": ...}.
+    phones: list[dict] = field(default_factory=list)
 
     # --- Divers ---
     extras: dict = field(default_factory=dict)

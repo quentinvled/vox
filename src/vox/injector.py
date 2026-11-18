@@ -24,6 +24,7 @@ if sys.platform == "win32":
         inject,
         paste_text,
         press_enter,
+        press_keys,
         set_clipboard_text,
         type_text,
     )
@@ -39,6 +40,7 @@ elif sys.platform == "darwin":
         inject,
         paste_text,
         press_enter,
+        press_keys,
         set_clipboard_text,
         type_text,
     )
@@ -54,6 +56,7 @@ else:
         inject,
         paste_text,
         press_enter,
+        press_keys,
         set_clipboard_text,
         type_text,
     )
@@ -70,6 +73,7 @@ __all__ = [
     "inject",
     "paste_text",
     "press_enter",
+    "press_keys",
     "set_clipboard_text",
     "type_text",
 ]

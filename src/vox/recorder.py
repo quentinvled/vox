@@ -252,6 +252,96 @@ class Recorder:
         return self._samples_written / float(self.samplerate)
 
 
+class StreamRecorder:
+    """Enregistrement recu par le reseau (dictee depuis le telephone).
+
+    Meme interface que `Recorder` pour le pipeline (`start`, `stop`, `cancel`,
+    `level`, `has_speech`, `hit_max`…), mais les echantillons arrivent par
+    `feed()` : du PCM 16 bits mono, deja a 16 kHz.
+    """
+
+    def __init__(self, samplerate: int = 16000, max_seconds: int = 120) -> None:
+        self.samplerate = samplerate
+        self.max_seconds = max_seconds
+        self._chunks: list[bytes] = []
+        self._size = 0
+        self._active = False
+        self._started_at = 0.0
+        self._level = 0.0
+        self._max_peak = 0.0
+        self._hit_max = False
+        self._odd = b""
+
+    @property
+    def level(self) -> float:
+        return self._level
+
+    @property
+    def has_speech(self) -> bool:
+        return self._max_peak >= SILENCE_PEAK
+
+    @property
+    def recording(self) -> bool:
+        return self._active
+
+    @property
+    def hit_max(self) -> bool:
+        return self._hit_max
+
+    @property
+    def seconds(self) -> float:
+        return self._size / (2.0 * self.samplerate)
+
+    def elapsed(self) -> float:
+        return time.monotonic() - self._started_at if self._active else 0.0
+
+    def start(self) -> None:
+        self._chunks = []
+        self._size = 0
+        self._odd = b""
+        self._level = 0.0
+        self._max_peak = 0.0
+        self._hit_max = False
+        self._active = True
+        self._started_at = time.monotonic()
+
+    def feed(self, data: bytes) -> None:
+        """Ajoute un paquet recu. Ignore tout ce qui arrive hors d'une prise."""
+        if not self._active or not data:
+            return
+        data = self._odd + bytes(data)
+        cut = len(data) - (len(data) % 2)
+        data, self._odd = data[:cut], data[cut:]
+        if not data:
+            return
+        if self.seconds >= self.max_seconds:
+            self._hit_max = True
+            return
+        self._chunks.append(data)
+        self._size += len(data)
+        samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+        rms = float(np.sqrt(np.mean(np.square(samples))))
+        self._level = max(rms, self._level * 0.75)
+        self._max_peak = max(self._max_peak, float(np.max(np.abs(samples))))
+        if self.seconds >= self.max_seconds:
+            self._hit_max = True
+
+    def stop(self) -> bytes:
+        self._active = False
+        self._level = 0.0
+        chunks, self._chunks = self._chunks, []
+        if not chunks:
+            return b""
+        samples = np.frombuffer(b"".join(chunks), dtype=np.int16)
+        return _encode_wav(samples, self.samplerate)
+
+    def cancel(self) -> None:
+        self._active = False
+        self._level = 0.0
+        self._chunks = []
+        self._size = 0
+
+
 def _encode_wav(samples: np.ndarray, samplerate: int) -> bytes:
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as handle:

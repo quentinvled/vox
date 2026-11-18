@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#07080b">
+  <meta name="color-scheme" content="dark">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Vox">
+  <meta name="robots" content="noindex">
+  <title>Vox</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/app.css">
+  <script type="module" src="/js/main.js"></script>
+</head>
+<body data-screen="loading" data-mode="dictation" data-phase="idle">
+
+  <!-- Téléphone non relié -->
+  <section class="welcome" aria-labelledby="welcome-title">
+    <img class="welcome-icon" src="/icons/icon.svg" alt="" width="72" height="72">
+    <h1 id="welcome-title">Vox</h1>
+    <p class="welcome-lead" id="welcome-lead">Dicte depuis ton téléphone, le texte s’écrit sur ton ordinateur.</p>
+    <ol class="steps">
+      <li><span>1</span><p>Sur l’ordinateur, ouvre le menu de Vox puis <b>Relier un téléphone</b>.</p></li>
+      <li><span>2</span><p>Scanne le code avec l’appareil photo.</p></li>
+    </ol>
+  </section>
+
+  <!-- Écran principal -->
+  <div class="app">
+    <header class="top">
+      <div class="device">
+        <span class="dot" aria-hidden="true"></span>
+        <div class="device-text">
+          <strong id="device-name">Ordinateur</strong>
+          <span id="device-status">Connexion…</span>
+        </div>
+      </div>
+      <button class="icon-button" id="menu-button" type="button" aria-label="Options">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+      </button>
+    </header>
+
+    <div class="banner" id="install-banner" hidden>
+      <p id="install-text"></p>
+      <button class="banner-action" id="install-action" type="button" hidden>Installer</button>
+      <button class="icon-button small" id="install-close" type="button" aria-label="Fermer">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <main class="stage">
+      <p class="transcript is-empty" id="transcript" aria-live="polite">Ta voix s’écrit là où se trouve ton curseur.</p>
+      <div class="actions" id="actions">
+        <button class="chip" type="button" data-action="enter">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 5v7a3 3 0 0 1-3 3H6m0 0l4-4m-4 4l4 4"/></svg>
+          Entrée
+        </button>
+        <button class="chip" type="button" data-action="undo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7L4 12l5 5M4 12h11a5 5 0 0 1 0 10h-2"/></svg>
+          Annuler
+        </button>
+        <button class="chip accent" type="button" data-action="reinsert">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/></svg>
+          Insérer
+        </button>
+      </div>
+    </main>
+
+    <section class="dock">
+      <div class="modes" role="radiogroup" aria-label="Mode">
+        <span class="modes-thumb" aria-hidden="true"></span>
+        <button type="button" role="radio" data-mode="dictation" aria-checked="true">Dictée</button>
+        <button type="button" role="radio" data-mode="instruction" aria-checked="false">Consigne</button>
+      </div>
+
+      <div class="talk-area">
+        <p class="cue" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
+          <span id="cue-text">Consigne</span>
+        </p>
+        <button class="talk" id="talk" type="button" aria-label="Maintenir pour parler">
+          <span class="talk-glow" aria-hidden="true"></span>
+          <span class="talk-fill" aria-hidden="true"></span>
+          <span class="talk-spin" aria-hidden="true"></span>
+          <span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        </button>
+      </div>
+
+      <div class="hint-row">
+        <p class="hint" id="hint" aria-live="polite">Maintiens pour parler</p>
+        <button class="hint-cancel" id="cancel" type="button" hidden>Annuler</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Options -->
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheet-backdrop" data-close></div>
+    <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <span class="sheet-grabber" aria-hidden="true"></span>
+      <p class="sheet-title" id="sheet-title">Relié à <b id="sheet-device">l’ordinateur</b></p>
+      <div class="sheet-list">
+        <button class="sheet-item" id="sheet-install" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M12 7v7m0 0l-3-3m3 3l3-3"/></svg>
+          <span>Ajouter à l’écran d’accueil</span>
+        </button>
+        <p class="sheet-note" id="sheet-install-note" hidden></p>
+        <button class="sheet-item danger" id="sheet-unpair" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5l5-5M8 11l-2 2a3.5 3.5 0 0 0 5 5l2-2m3-3l2-2a3.5 3.5 0 0 0-5-5l-2 2"/></svg>
+          <span id="sheet-unpair-label">Délier ce téléphone</span>
+        </button>
+      </div>
+      <p class="sheet-meta" id="sheet-meta">Vox</p>
+    </div>
+  </div>
+</body>
+</html>

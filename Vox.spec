@@ -11,7 +11,8 @@ Notes :
   * Le script d'entree est run_vox.py, pas src/vox/__main__.py (imports relatifs).
   * sounddevice embarque une DLL PortAudio qu'il faut collecter explicitement.
   * On exclut les gros modules Qt inutilises : l'app ne se sert que de
-    QtCore, QtGui, QtWidgets et QtNetwork.
+    QtCore, QtGui, QtWidgets, QtNetwork et QtWebSockets (dictee depuis le
+   telephone).
 """
 
 import os
@@ -110,7 +111,6 @@ a = Analysis(
         "PySide6.QtTest",
         "PySide6.QtUiTools",
         "PySide6.QtWebChannel",
-        "PySide6.QtWebSockets",
         "PySide6.QtSerialPort",
         "PySide6.QtSvgWidgets",
         "PySide6.QtTextToSpeech",

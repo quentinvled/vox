@@ -203,6 +203,12 @@ def paste_text(text: str, paste_keys: str = "ctrl+v", restore: bool = True) -> N
             set_clipboard_text(previous)
 
 
+
+def press_keys(combo: str) -> None:
+    """Envoie une combinaison de touches (« ctrl+z »…) a la fenetre active."""
+    _press_combo(combo)
+
+
 def press_enter() -> None:
     keyboard = _pynput()
     controller = keyboard.Controller()

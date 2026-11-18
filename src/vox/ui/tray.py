@@ -43,6 +43,7 @@ class Tray(QSystemTrayIcon):
     audio_refresh_requested = Signal()
     audio_test_requested = Signal()
     call_toggle_requested = Signal()
+    phone_requested = Signal()
 
     def __init__(
         self,
@@ -135,6 +136,14 @@ class Tray(QSystemTrayIcon):
             )
         self.call_action.triggered.connect(self.call_toggle_requested.emit)
         self._menu.addAction(self.call_action)
+
+        phone_action = QAction("Relier un téléphone…", self._menu)
+        phone_action.setToolTip(
+            "Dicter depuis le téléphone : le texte s'écrit sur cet ordinateur, "
+            "dans la fenêtre active"
+        )
+        phone_action.triggered.connect(self.phone_requested.emit)
+        self._menu.addAction(phone_action)
 
         # --- entrees audio : etat du micro et du son du systeme ---
         self.audio_menu = self._menu.addMenu("Entrées audio")

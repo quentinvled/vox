@@ -44,6 +44,7 @@ from .imports import (
 from .models import Catalogue
 from .naming import infer_speaker_names
 from .paths import calls_dir
+from .phone import PhoneLink
 from .pipeline import Pipeline
 from .recorder import Recorder, RecorderError, SystemRecorder
 from .reword import TONES
@@ -51,6 +52,7 @@ from .stats import format_duration
 from .transcript import Transcript
 from .ui.history_window import RecordingsWindow
 from .ui.overlay import Overlay
+from .ui.phone_window import PhoneWindow
 from .ui.settings_window import SettingsWindow
 from .ui.stats_window import StatsWindow
 from .ui.theme import app_qss, build_palette
@@ -63,6 +65,10 @@ SERVER_NAME = "vox-single-instance"
 
 # Duree d'affichage d'un message d'erreur quand la pilule se cache d'elle-meme.
 NOTICE_SECONDS = 6
+
+# Dictee depuis le telephone : les messages de l'ordinateur (« Rien capte »,
+# erreurs) suivent de peu la fin de la prise et restent destines au telephone.
+PHONE_GRACE_SECONDS = 2.0
 
 # Insertion non confirmee : la pilule reste affichee avec ce message.
 REVIEW_HINT = (
@@ -450,8 +456,13 @@ class VoxApp(QObject):
         self._call_worker: _CallTranscriber | None = None
         self._call_warned_hotkey = False
         self._pending_calls: list[calls.RecoveredCall] = []
+        self._phone_window: PhoneWindow | None = None
+        # Prise en cours (ou en traitement) venue du telephone.
+        self._phone_session = False
+        self._phone_grace_until = 0.0
 
         self.pipeline = Pipeline(self.settings)
+        self.phone = PhoneLink(self.settings, self)
         self.hotkey = HotkeyManager(
             self.settings.hotkey,
             self.settings.hotkey_mode,
@@ -498,6 +509,7 @@ class VoxApp(QObject):
         self.tray.icon_help_requested.connect(self.show_icon_help)
         self.tray.autostart_toggled.connect(self.set_autostart_enabled)
         self.tray.taskbar_toggled.connect(self.set_taskbar_mode)
+        self.tray.phone_requested.connect(self.open_phone)
 
         self.overlay.model_selected.connect(self.set_model)
         self.overlay.reword_toggled.connect(self.set_reword_enabled)
@@ -515,6 +527,17 @@ class VoxApp(QObject):
         self.pipeline.finalized.connect(self._on_finalized)
         self.pipeline.transcript_ready.connect(self._on_transcript)
         self.pipeline.retranscribed.connect(self._on_retranscribed)
+
+        self.phone.capture_started.connect(self._on_phone_start)
+        self.phone.capture_stopped.connect(self._on_phone_stop)
+        self.phone.capture_cancelled.connect(self._on_phone_cancel)
+        self.phone.mode_requested.connect(self._on_phone_mode)
+        self.phone.action_requested.connect(self._on_phone_action)
+        self.phone.settings_changed.connect(lambda: config_module.save(self.settings))
+        self.phone.paired.connect(self._on_phone_paired)
+        self.pipeline.status_changed.connect(self._status_to_phone)
+        self.pipeline.finalized.connect(self._final_to_phone)
+        self.pipeline.notice.connect(self._notice_to_phone)
 
         self._hotkey_timer = QTimer(self)
         self._hotkey_timer.setInterval(15)
@@ -586,6 +609,7 @@ class VoxApp(QObject):
 
         QTimer.singleShot(6000, self.check_updates)
         self._update_timer.start()
+        self.phone.start()
 
     def _greet(self) -> None:
         """Confirme visuellement que Vox tourne, même si l'icône est masquée."""
@@ -810,11 +834,15 @@ class VoxApp(QObject):
     def _on_recording_changed(self, recording: bool) -> None:
         # Arme la bascule Espace (dictée ⇄ consigne) le temps de l'écoute, et la
         # désarme avant la transcription (l'Espace sera alors libre pour le texte).
-        self.hotkey.set_armed(recording and self.settings.instruction_enabled)
+        # Depuis le telephone, la bascule passe par le telephone : l'Espace du
+        # clavier reste a la personne qui utilise l'ordinateur.
+        self.hotkey.set_armed(
+            recording and self.settings.instruction_enabled and not self._phone_session
+        )
         if recording:
             self._recording_started_at = time.monotonic()
             self.overlay.show_pill()
-            self.overlay.set_state("recording", detail=f"{self.hotkey_label} pour arreter")
+            self.overlay.set_state("recording", detail=self._recording_detail())
             self.tray.set_status("Enregistrement…")
             self._level_timer.start()
             self._clock_timer.start()
@@ -896,16 +924,19 @@ class VoxApp(QObject):
             QTimer.singleShot(120, injector.press_enter)
 
     def _tick_level(self) -> None:
-        self.overlay.push_level(self.pipeline.recorder.level)
+        self.overlay.push_level(self.pipeline.source.level)
+
+    def _recording_detail(self) -> str:
+        return "Depuis le téléphone" if self._phone_session else f"{self.hotkey_label} pour arreter"
 
     def _tick_clock(self) -> None:
         elapsed = int(time.monotonic() - self._recording_started_at)
-        prefix = "Enregistrement " if self.pipeline.recorder.hit_max else ""
+        prefix = "Enregistrement " if self.pipeline.source.hit_max else ""
         self.overlay.set_state(
             "recording",
-            detail=f"{prefix}{elapsed // 60:01d}:{elapsed % 60:02d}  ·  {self.hotkey_label} pour arreter",
+            detail=f"{prefix}{elapsed // 60:01d}:{elapsed % 60:02d}  ·  {self._recording_detail()}",
         )
-        if self.pipeline.recorder.hit_max:
+        if self.pipeline.source.hit_max:
             self.pipeline.stop_recording()
 
     # ------------------------------------------------------------------
@@ -1136,6 +1167,109 @@ class VoxApp(QObject):
         self._stats_window.show()
         self._stats_window.raise_()
         self._stats_window.activateWindow()
+
+    # ------------------------------------------------------------------
+    # Telephone (dictee a distance)
+    # ------------------------------------------------------------------
+    def open_phone(self) -> None:
+        """Fenetre d'appairage : code QR et telephones relies."""
+        if self._phone_window is None:
+            self._phone_window = PhoneWindow(self.phone)
+        self._phone_window.show()
+        self._phone_window.raise_()
+        self._phone_window.activateWindow()
+
+    def _on_phone_paired(self, name: str) -> None:
+        self._on_notice("info", f"{name or 'Téléphone'} relié : tu peux dicter depuis le téléphone.")
+
+    def _phone_recording(self) -> bool:
+        return self.pipeline.recording and self.pipeline.source is self.phone.recorder
+
+    def _on_phone_start(self, mode: str) -> None:
+        if self.call_recording:
+            self.phone.send_state("busy", message="Un appel est en cours d’enregistrement sur l’ordinateur")
+            return
+        if self.pipeline.recording or self.pipeline.busy:
+            self.phone.send_state("busy", message="Vox est déjà en train de dicter sur l’ordinateur")
+            return
+        self._pending_enter = False
+        self._phone_session = True
+        if not self.pipeline.start_recording(source=self.phone.recorder):
+            self._phone_session = False
+            self.phone.send_state("busy", message="Vox n’a pas pu démarrer")
+            return
+        if mode == "instruction" and self.settings.instruction_enabled:
+            self.pipeline.set_mode("instruction")
+        self.phone.send_state("listening")
+
+    def _on_phone_stop(self) -> None:
+        if self._phone_recording():
+            self.pipeline.stop_recording()
+
+    def _on_phone_cancel(self) -> None:
+        if self._phone_recording():
+            self.pipeline.cancel_recording()
+        self._end_phone_session()
+
+    def _on_phone_mode(self, mode: str) -> None:
+        if not self._phone_recording():
+            return
+        if mode == "instruction" and not self.settings.instruction_enabled:
+            return
+        if mode != self.pipeline.mode:
+            self.pipeline.set_mode(mode)
+            if self.settings.sounds:
+                sounds.play("mode")
+
+    def _on_phone_action(self, name: str) -> None:
+        """Touches envoyees depuis le telephone, apres une dictee."""
+        try:
+            if name == "enter":
+                injector.press_enter()
+            elif name == "undo":
+                injector.press_keys("cmd+z" if sys.platform == "darwin" else "ctrl+z")
+            elif name == "reinsert" and self.pipeline.last_final:
+                injector.inject(
+                    self.pipeline.last_final, self.settings.inject_method, self.settings.paste_keys
+                )
+                self.phone.send_state("done", text=self.pipeline.last_final)
+        except injector.InjectorError as exc:
+            self.phone.send_state("error", message=f"Touche non envoyée : {exc}")
+
+    def _end_phone_session(self) -> None:
+        if self._phone_session:
+            self._phone_session = False
+            self._phone_grace_until = time.monotonic() + PHONE_GRACE_SECONDS
+
+    def _status_to_phone(self, state: str) -> None:
+        """Le telephone suit la prise qu'il a lancee, jusqu'a l'insertion."""
+        if not self._phone_session:
+            return
+        if state in {"transcribing", "rewording", "instructing"}:
+            text = self.pipeline.last_transcript if state != "transcribing" else ""
+            self.phone.send_state(state, text=text)
+        elif state in {"idle", "cancelled"}:
+            self.phone.send_state("idle")
+            self._end_phone_session()
+        elif state == "error":
+            # Le message detaille suit par `notice` (voir _notice_to_phone).
+            self._end_phone_session()
+
+    def _final_to_phone(self, text: str, meta: dict) -> None:
+        if not self._phone_session:
+            return
+        confirmed = meta.get("insertion_confirmed", True)
+        self.phone.send_state("done" if confirmed else "review", text=text)
+        self._end_phone_session()
+
+    def _notice_to_phone(self, level: str, message: str) -> None:
+        if not (self._phone_session or time.monotonic() < self._phone_grace_until):
+            return
+        if level == "error":
+            self.phone.send_state("error", message=message)
+            self._end_phone_session()
+        else:
+            self.phone.send_notice(message)
 
     def open_recordings(self) -> None:
         """Ouvre (ou ramene au premier plan) la bibliotheque."""
@@ -1762,7 +1896,12 @@ class VoxApp(QObject):
 
     def _commit_settings(self, settings: Settings) -> None:
         previous = self.settings
+        # Les telephones se gerent dans leur propre fenetre : une copie des
+        # reglages ouverte avant un appairage ne doit pas les effacer.
+        settings.phone_secret = previous.phone_secret
+        settings.phones = previous.phones
         self.settings = settings
+        self.phone.apply_settings(settings)
 
         if previous.provider != settings.provider:
             # Les reglages ont deja choisi les defauts du nouveau fournisseur,
@@ -1825,6 +1964,7 @@ class VoxApp(QObject):
         self._audio_timer.stop()
         self._call_timer.stop()
         self.hotkey.stop()
+        self.phone.close()
         self._save_call_before_quit()
         # Les chargements appartiennent au controleur, pas a la fenetre des
         # reglages : fermer celle-ci pendant une requete ne doit pas tuer Qt.
