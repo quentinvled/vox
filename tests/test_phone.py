@@ -118,6 +118,19 @@ def _message(link: PhoneLink, **payload) -> None:
     link._on_text(json.dumps(payload))
 
 
+def test_reconnect_keeps_the_pairing(link, monkeypatch) -> None:
+    link.settings.phone_secret = "s" * 43
+    link._pending.add("b" * 32)
+    calls = []
+    monkeypatch.setattr(link, "_connect", lambda: calls.append("connect"))
+    link._attempt = 4
+    link.reconnect()
+    assert calls == ["connect"]
+    assert link._attempt == 0
+    assert link.settings.phone_secret == "s" * 43
+    assert link._allowlist() == ["a" * 32, "b" * 32]
+
+
 def test_capture_flow(link) -> None:
     events: list[str] = []
     link.capture_started.connect(lambda mode: events.append(f"start:{mode}"))

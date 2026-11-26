@@ -7,12 +7,12 @@
 // À chaque modification de web/ : augmenter CACHE (et VERSION dans main.js).
 // Le canal /ws et /healthz ne passent jamais par le cache.
 
-const CACHE = "vox-1.1.2";
+const CACHE = "vox-1.2.0";
 const SHELL = [
   "/",
   "/app.css",
-  "/js/main.js?v=1.1.2",
-  "/js/link.js",
+  "/js/main.js?v=1.2.0",
+  "/js/link.js?v=1.2.0",
   "/js/mic.js",
   "/js/pairing.js",
   "/js/capture-worklet.js",

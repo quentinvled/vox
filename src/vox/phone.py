@@ -164,6 +164,13 @@ class PhoneLink(QObject):
         self._drop()
         self._set_state("off")
 
+    def reconnect(self) -> None:
+        """Relance seulement la liaison, sans modifier les téléphones reliés."""
+        self._retry.stop()
+        self._attempt = 0
+        self._drop()
+        self._connect()
+
     def _drop(self) -> None:
         self._watchdog.stop()
         socket, self._socket = self._socket, None
@@ -192,6 +199,8 @@ class PhoneLink(QObject):
         socket.pong.connect(self._touch)
         self._socket = socket
         self._set_state("connecting")
+        self._touch()
+        self._watchdog.start()
         socket.open(QUrl(self.settings.phone_relay_url or DEFAULT_PHONE_RELAY))
 
     def _on_connected(self) -> None:
@@ -206,7 +215,6 @@ class PhoneLink(QObject):
                 "version": __version__,
             }
         )
-        self._watchdog.start()
 
     def _on_error(self, _error) -> None:
         socket = self._socket
@@ -254,8 +262,11 @@ class PhoneLink(QObject):
         if time.monotonic() - self._last_seen > SILENCE_LIMIT:
             log.info("Relais muet : reconnexion")
             socket.abort()
+            if self._socket is socket:
+                self._on_disconnected()
             return
-        socket.ping()
+        if socket.state() == QAbstractSocket.SocketState.ConnectedState:
+            socket.ping()
 
     # ------------------------------------------------------------------
     # Appairage
@@ -350,6 +361,7 @@ class PhoneLink(QObject):
         if kind == "ready":
             self._ready = True
             self._attempt = 0
+            self._send({"t": "allow", "allowed": self._allowlist()})
             self._set_state("online")
         elif kind == "phone":
             self._on_presence(

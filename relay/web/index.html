@@ -15,7 +15,7 @@
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css">
-  <script type="module" src="/js/main.js?v=1.1.2"></script>
+  <script type="module" src="/js/main.js?v=1.2.0"></script>
 </head>
 <body data-screen="loading" data-mode="dictation" data-phase="idle">
 
@@ -41,13 +41,18 @@
         <span class="dot" aria-hidden="true"></span>
         <div class="device-text">
           <strong id="device-name">Ordinateur</strong>
-          <span id="device-status">Connexion…</span>
+          <span id="device-status" aria-live="polite">Connexion…</span>
         </div>
       </div>
       <button class="icon-button" id="menu-button" type="button" aria-label="Options">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
       </button>
     </header>
+
+    <div class="banner" id="connection-banner" hidden>
+      <p id="connection-detail" role="status"></p>
+      <button class="banner-action" id="connection-retry" type="button">Réessayer</button>
+    </div>
 
     <div class="banner" id="install-banner" hidden>
       <p id="install-text"></p>
@@ -127,6 +132,10 @@
       <span class="sheet-grabber" aria-hidden="true"></span>
       <p class="sheet-title" id="sheet-title">Relié à <b id="sheet-device">l’ordinateur</b></p>
       <div class="sheet-list">
+        <button class="sheet-item" id="sheet-retry" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10a8 8 0 1 0-1.5 7M20 4v6h-6"/></svg>
+          <span>Relancer la connexion</span>
+        </button>
         <button class="sheet-item" type="button" data-scan>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></svg>
           <span>Relier à un autre ordinateur</span>

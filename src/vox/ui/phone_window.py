@@ -201,7 +201,12 @@ class PhoneWindow(QWidget):
         footer.addWidget(self.status_dot, 0, Qt.AlignVCenter)
         self.status_label = QLabel()
         self.status_label.setObjectName("phoneStatus")
+        self.status_label.setWordWrap(True)
         footer.addWidget(self.status_label, 1)
+        self.retry_button = QPushButton("Relancer la connexion")
+        self.retry_button.setToolTip("Reconnecte Vox sans quitter ni refaire l’appairage.")
+        self.retry_button.clicked.connect(self.link.reconnect)
+        footer.addWidget(self.retry_button)
         outer.addLayout(footer)
 
     def _build_code(self) -> QWidget:
@@ -332,6 +337,7 @@ class PhoneWindow(QWidget):
 
     def _refresh_status(self, state: str) -> None:
         self.status_label.setText(STATUS_TEXT.get(state, ""))
+        self.retry_button.setEnabled(self.link.wanted)
         c = palette("dark")
         color = {"online": c["success"], "waiting": c["warn"], "connecting": c["warn"]}.get(
             state, c["border_strong"]

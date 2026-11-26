@@ -160,6 +160,11 @@ faite par Vox sur l'ordinateur, avec ta clé et tes réglages. Les téléphones
 reliés se retirent depuis la même fenêtre. Détails et protocole :
 [`relay/README.md`](relay/README.md).
 
+Si le téléphone affiche « PC hors ligne » alors que Vox tourne, ouvre
+**Relier un téléphone… → Relancer la connexion** sur le PC. Pas besoin de quitter
+Vox ni de rescanner. Le téléphone propose aussi **Réessayer** pour sa propre
+connexion, et distingue un PC absent d'un relais injoignable.
+
 ## Où sont rangés les appels et les imports
 
 Les enregistrements d'appels et les transcriptions d'imports vivent dans un

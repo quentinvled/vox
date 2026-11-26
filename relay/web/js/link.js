@@ -1,13 +1,14 @@
 // Liaison avec l'ordinateur à travers le relais (WebSocket).
 //
 // Événements émis (CustomEvent, détail entre parenthèses) :
-//   status   ({ link, computer })  link : "connecting" | "open" | "offline"
+//   status   ({ link, computer })  link : "connecting" | "open" | "offline" | "unreachable"
 //   message  (objet JSON reçu de l'ordinateur)
 //   revoked  ()                    le relais refuse ce téléphone
 
 const CLOSE_NOT_ALLOWED = 4003;
 const MAX_QUEUE_BYTES = 4 * 1024 * 1024;
 const PROBE_MS = 1500;
+const CONNECT_MS = 8000;
 
 export class Link extends EventTarget {
   constructor({ room, token, name }) {
@@ -24,6 +25,7 @@ export class Link extends EventTarget {
     this.queued = 0;
     this.stopped = false;
     this.probeTimer = 0;
+    this.connectTimer = 0;
   }
 
   get online() {
@@ -46,14 +48,21 @@ export class Link extends EventTarget {
     this.socket = socket;
     this.ready = false;
     this.emitStatus("connecting");
+    this.connectTimer = setTimeout(() => {
+      if (this.socket !== socket || this.ready) return;
+      this.detach();
+      this.emitStatus(navigator.onLine === false ? "offline" : "unreachable");
+      this.scheduleRetry();
+    }, CONNECT_MS);
 
     socket.addEventListener("open", () => {
+      if (this.socket !== socket) return;
       socket.send(
         JSON.stringify({ t: "auth", role: "phone", room: this.room, token: this.token, name: this.name }),
       );
     });
     socket.addEventListener("message", (event) => {
-      if (typeof event.data !== "string") return;
+      if (this.socket !== socket || typeof event.data !== "string") return;
       let message;
       try {
         message = JSON.parse(event.data);
@@ -65,6 +74,8 @@ export class Link extends EventTarget {
     });
     socket.addEventListener("close", (event) => {
       if (this.socket !== socket) return;
+      clearTimeout(this.connectTimer);
+      clearTimeout(this.probeTimer);
       this.socket = null;
       this.ready = false;
       if (event.code === CLOSE_NOT_ALLOWED) {
@@ -72,7 +83,7 @@ export class Link extends EventTarget {
         this.dispatchEvent(new CustomEvent("revoked"));
         return;
       }
-      this.emitStatus(navigator.onLine === false ? "offline" : "connecting");
+      this.emitStatus(navigator.onLine === false ? "offline" : "unreachable");
       this.scheduleRetry();
     });
   }
@@ -80,6 +91,7 @@ export class Link extends EventTarget {
   receive(message) {
     if (message.t === "pong") return;
     if (message.t === "ready") {
+      clearTimeout(this.connectTimer);
       this.ready = true;
       this.retry = 0;
       this.computer = message.computer;
@@ -124,19 +136,31 @@ export class Link extends EventTarget {
     socket.send(JSON.stringify({ t: "ping" }));
     this.probeTimer = setTimeout(() => {
       if (this.socket !== socket) return;
-      this.socket = null;
-      this.ready = false;
-      socket.close();
-      this.connect();
+      this.reconnect();
     }, PROBE_MS);
   }
 
   close() {
     this.stopped = true;
+    this.detach();
+  }
+
+  reconnect() {
+    if (this.stopped) return;
+    this.retry = 0;
+    this.detach();
+    this.connect();
+  }
+
+  detach() {
     clearTimeout(this.retryTimer);
+    clearTimeout(this.probeTimer);
+    clearTimeout(this.connectTimer);
     this.dropQueue();
-    this.socket?.close(1000);
+    const socket = this.socket;
     this.socket = null;
+    this.ready = false;
+    socket?.close(1000);
   }
 
   // JSON ou ArrayBuffer. Pendant une prise, ce qui ne peut pas partir tout de

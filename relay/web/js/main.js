@@ -9,7 +9,7 @@
 // tout de suite et le bouton répond avant même que la connexion soit établie ;
 // ce qui est dit part dès qu'elle l'est.
 
-import { Link } from "./link.js";
+import { Link } from "./link.js?v=1.2.0";
 import { Mic, micPermission } from "./mic.js";
 import {
   cachedComputer,
@@ -23,7 +23,7 @@ import {
 } from "./pairing.js";
 import { Scanner } from "./scanner.js";
 
-const VERSION = "1.1.2";
+const VERSION = "1.2.0";
 const OPTIMISTIC_MS = 3000;
 const MIC_KEY = "vox.micAllowed";
 const TAP_MS = 280;
@@ -43,6 +43,10 @@ const ui = {
   modes: [...document.querySelectorAll(".modes button")],
   deviceName: $("#device-name"),
   deviceStatus: $("#device-status"),
+  connectionBanner: $("#connection-banner"),
+  connectionDetail: $("#connection-detail"),
+  connectionRetry: $("#connection-retry"),
+  sheetRetry: $("#sheet-retry"),
   menu: $("#menu-button"),
   sheet: $("#sheet"),
   sheetDevice: $("#sheet-device"),
@@ -166,6 +170,8 @@ function showTranscript(text, { pending = false } = {}) {
 }
 
 function renderLink({ link, computer }) {
+  const status = link;
+  if (link === "offline" || link === "unreachable") endOptimism();
   if (link === "open") {
     endOptimism();
     rememberComputer(computer);
@@ -175,7 +181,7 @@ function renderLink({ link, computer }) {
       endCapture();
       setMode(state.baseMode);
     }
-  } else if (state.optimistic) {
+  } else if (link === "connecting" && state.optimistic) {
     // Reconnexion en cours : on garde l'affichage du dernier état connu.
     computer = state.optimistic;
     link = computer.online ? "open" : link;
@@ -184,8 +190,30 @@ function renderLink({ link, computer }) {
   ui.deviceName.textContent = computer.name || "Ordinateur";
   ui.sheetDevice.textContent = computer.name || "l’ordinateur";
   ui.deviceStatus.textContent =
-    link !== "open" ? (link === "offline" ? "Pas de réseau" : "Connexion…") : computer.online ? "Connecté" : "Hors ligne";
+    link === "open" ? (computer.online ? "Connecté" : "PC hors ligne")
+      : link === "offline" ? "Pas de réseau"
+      : link === "unreachable" ? "Relais injoignable" : "Connexion…";
+  ui.connectionBanner.hidden = link === "open" && computer.online;
+  ui.connectionRetry.disabled = status === "connecting";
+  ui.connectionRetry.textContent = status === "connecting" ? "Connexion…" : "Réessayer";
+  ui.connectionDetail.textContent = {
+    offline: "Vérifie le Wi-Fi ou les données mobiles.",
+    unreachable: "Le téléphone ne joint pas le relais Vox.",
+    connecting: "Recherche de ton ordinateur…",
+    open: computer.online ? "" : "Le relais répond, mais ne voit pas ton PC. Vérifie que Vox y est ouvert.",
+  }[status];
   settle();
+}
+
+function retryConnection() {
+  if (state.capture || state.phase === "working") {
+    closeSheet();
+    setHint("Attends la fin de la dictée pour relancer la connexion.");
+    return;
+  }
+  if (!ui.sheet.hidden) closeSheet();
+  endOptimism();
+  state.link?.reconnect();
 }
 
 function beginOptimism() {
@@ -661,6 +689,8 @@ function showWelcome(alert) {
 // Démarrage
 // ---------------------------------------------------------------------
 function wire() {
+  ui.connectionRetry.addEventListener("click", retryConnection);
+  ui.sheetRetry.addEventListener("click", retryConnection);
   ui.talk.addEventListener("pointerdown", onPointerDown);
   ui.talk.addEventListener("pointermove", onPointerMove);
   ui.talk.addEventListener("pointerup", onPointerUp);
@@ -701,6 +731,10 @@ function wire() {
   });
   window.addEventListener("online", () => state.link?.wake());
   window.addEventListener("offline", () => renderLink({ link: "offline", computer: state.link.computer }));
+  // Un réseau peut se couper sans événement du navigateur (veille, Wi-Fi).
+  setInterval(() => {
+    if (!document.hidden && !state.capture && state.phase !== "working") state.link?.wake();
+  }, 15000);
 }
 
 async function start() {
